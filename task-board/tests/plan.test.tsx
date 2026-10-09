@@ -509,11 +509,16 @@ test('跨设备：别的电脑的快照并入会话，秒数按本机时间推�
   expect(mergeRemote({ at, sessions: [row('a', '本机', 'running', 5)] }, 600).map(x => x.id)).toEqual(['a'])
 })
 
-test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）、不可点跳转；本机的照旧可点', async ($, on) => {
+test('桌面：别的电脑的会话带灰色标签（那台电脑的名字），点了经 Remote Control 打开；没有 Remote Control 编号的不可点；本机的照旧可点', async ($, on) => {
   const at = Date.now()
   const board = {
     at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
-    sessions: [row('b', '本会话', 'running', 5), row('c', '本机别的会话', 'done', 600), row('m', 'Mac 上的会话', 'running', 5, { device: 'MacBook', os: 'mac' })],
+    sessions: [
+      row('b', '本会话', 'running', 5),
+      row('c', '本机别的会话', 'done', 600),
+      row('m', 'Mac 上的会话', 'running', 5, { device: 'MacBook', os: 'mac', bridge: 'session_01Test' }),
+      row('n', '旧版本写的', 'done', 5, { device: 'MacBook', os: 'mac' }),
+    ],
   }
   on('state.get', async (_$, e, next) => {
     if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
@@ -521,13 +526,29 @@ test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）�
     return next(e)
   })
   on('ui.log', async () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  const runs: string[][] = []
+  on('process.run', async (_$, e) => {
+    runs.push([...e.argv])
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
   expect(await ui.find({ key: 'row-m' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^ MacBook $/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^ Mac $/ })).toBeUndefined()
-  // 远端卡没有跳转点击层；本机别的会话有
-  expect(await ui.find({ key: 'go-m' })).toBeUndefined()
-  expect(await ui.find({ key: 'go2-m' })).toBeUndefined()
+  // 有 Remote Control 编号的远端卡可点：打开 claude://claude.ai/code/<编号>，不用那台电脑自己的 local_ 链接
+  expect(await ui.find({ key: 'go-m' })).toBeDefined()
+  expect(await ui.find({ key: 'go2-m' })).toBeDefined()
+  await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'go-m' })
+  expect(runs).toEqual([['rundll32.exe', 'url.dll,FileProtocolHandler', 'claude://claude.ai/code/session_01Test']])
+  expect(toasts.some(t => t.includes('Opening "Mac 上的会话" from MacBook via Remote Control'))).toBe(true)
+  // 没有编号的（旧版本扫描进程写的快照）不挂点击层；本机别的会话照旧有
+  expect(await ui.find({ key: 'go-n' })).toBeUndefined()
+  expect(await ui.find({ key: 'go2-n' })).toBeUndefined()
   expect(await ui.find({ key: 'go-c' })).toBeDefined()
   // 远端卡的明细照样能展开，标题行也带标签
   await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'x-m' })
@@ -536,11 +557,15 @@ test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）�
   await ui.unmount()
 })
 
-test('Details 窗：别的电脑的会话有那台电脑的标签，没有跳转点击层', async ($, on) => {
+test('Details 窗：别的电脑的会话有那台电脑的标签；有 Remote Control 编号的才有跳转点击层', async ($, on) => {
   const at = Date.now()
   const board = {
     at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
-    sessions: [row('b', '本会话', 'running', 5), row('m', 'Win 上的会话', 'done', 30, { device: 'WinPC', os: 'win' })],
+    sessions: [
+      row('b', '本会话', 'running', 5),
+      row('m', 'Win 上的会话', 'done', 30, { device: 'WinPC', os: 'win' }),
+      row('r', 'Win 上开着 Remote Control 的', 'done', 30, { device: 'WinPC', os: 'win', bridge: 'session_01Test' }),
+    ],
   }
   on('state.get', async (_$, e, next) => {
     if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
@@ -556,5 +581,7 @@ test('Details 窗：别的电脑的会话有那台电脑的标签，没有跳转
   expect(await ui.find({ type: 'Text', text: /^Win$/ })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go-m' })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go2-m' })).toBeUndefined()
+  expect(await ui.find({ key: 'pane-go-r' })).toBeDefined()
+  expect(await ui.find({ key: 'pane-go2-r' })).toBeDefined()
   await ui.unmount()
 })

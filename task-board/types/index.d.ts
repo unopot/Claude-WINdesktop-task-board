@@ -5,6 +5,8 @@ export type SessionRow = {
   id: string
   title: string
   link: string
+  /** 这个会话的 Remote Control 编号（桌面应用元数据 bridgeSessionIds 的最后一个，session_…）：别的电脑点这张卡时打开 claude://claude.ai/code/<编号>；没有 = '' */
+  bridge?: string
   project: string
   status: SessionStatus
   ageSec: number

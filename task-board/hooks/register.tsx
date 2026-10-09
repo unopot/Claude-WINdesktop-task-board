@@ -89,8 +89,21 @@ const HEX: Record<SessionStatus, string> = { input: '#f5b324', running: '#3b82f6
 /** 还在这一轮里的会话（左栏）：在等我、在跑、停在工具调用上。 */
 const isLive = (s: SessionRow) => s.status === 'input' || s.status === 'running' || s.status === 'waiting'
 
-/** 别的电脑上的会话（经共享目录读到，device = 那台电脑的标签）：只能看，不能点跳转（claude:// 只能切本机的会话）。 */
+/** 别的电脑上的会话（经共享目录读到，device = 那台电脑的标签）。 */
 const isRemote = (s: SessionRow) => s.device !== undefined
+
+/** Remote Control 的会话编号（Claude 应用的 claude://claude.ai/code/<编号> 只认这两种前缀）。 */
+const BRIDGE_ID = /^(cse|session)_[A-Za-z0-9_-]+$/
+
+/**
+ * 点卡片打开的链接：本机的会话 = claude://claude.ai/epitaxy/local_…（切到那个会话）；
+ * 别的电脑的会话 = 它的 Remote Control（claude://claude.ai/code/session_…，Claude 应用打开远程查看）；打不开 = ''。
+ */
+const goLink = (s: SessionRow) =>
+  isRemote(s) ? (s.bridge !== undefined && BRIDGE_ID.test(s.bridge) ? `claude://claude.ai/code/${s.bridge}` : '') : s.link
+
+/** 卡片挂不挂跳转点击层：本机的都挂（没链接的点了提示）；别的电脑的要有 Remote Control 编号（旧版本写的快照没有）。 */
+const canOpen = (s: SessionRow) => !isRemote(s) || goLink(s) !== ''
 
 /** 细圆角进度条（仿用量页）：淡色轨道 + 按比例的实色填充，不做动画。 */
 function barSvg(s: SessionRow) {
@@ -359,13 +372,15 @@ function rowState(s: SessionRow) {
 }
 
 
-/** 打开 claude:// 链接（openArgv，平台相关），Claude 应用会切到对应会话。 */
-async function jump($: EngineInterface, link: string, title: string) {
-  if (!/^claude:\/\/claude\.ai\/epitaxy\/local_[0-9a-f-]+$/.test(link)) {
-    await $.ui.toast(`"${title}" has no link to switch to`)
+/** 打开 goLink 的 claude:// 链接（openArgv，平台相关）：本机的会话 Claude 应用直接切过去，别的电脑的经 Remote Control 打开。 */
+async function jump($: EngineInterface, s: SessionRow) {
+  const link = goLink(s)
+  const remote = isRemote(s)
+  if (!(remote ? link !== '' : /^claude:\/\/claude\.ai\/epitaxy\/local_[0-9a-f-]+$/.test(link))) {
+    await $.ui.toast(`"${s.title}" has no link to switch to`)
     return
   }
-  await $.ui.toast(`Switching to "${title}"…`)
+  await $.ui.toast(remote ? `Opening "${s.title}" from ${s.device} via Remote Control…` : `Switching to "${s.title}"…`)
   try {
     const r = await $.process.run(openArgv(link))
     if (r.exitCode !== 0) await $.ui.toast(`Switch failed (exit code ${r.exitCode})`)
@@ -594,7 +609,7 @@ async function act($: EngineInterface, a: string) {
     if (item) await pick($, item)
   } else if (a.startsWith('go:')) {
     const s = (await read($, board)).sessions.find(x => x.id === a.slice(3))
-    if (s) await jump($, s.link, s.title)
+    if (s) await jump($, s)
   }
 }
 
@@ -1034,7 +1049,7 @@ export const register: Register = (on, options) => {
     const pill = (key: string) => (
       <Text key={key} bold color={ACCENT} backgroundColor={ACCENT_BG}> Current </Text>
     )
-    // 别的电脑的会话：标题前一个灰色小标签（那台电脑自己设的标签，如 Win / Mac），和 Current 同款；这种卡只能看，不挂点击层
+    // 别的电脑的会话：标题前一个灰色小标签（那台电脑自己设的标签，如 Win / Mac），和 Current 同款；点了经 Remote Control 打开，没有编号的不挂点击层
     const tag = (key: string, s: SessionRow) => (
       <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${s.device} `}</Text>
     )
@@ -1061,7 +1076,7 @@ export const register: Register = (on, options) => {
           borderDimColor={!isSelf && !isOpen}
           borderColor={isSelf ? ACCENT : isOpen ? BLUE_LINE : undefined}
           backgroundColor={isSelf ? ACCENT_TINT : undefined}
-          hover={isSelf || isRemote(s) ? undefined : HOVER}
+          hover={isSelf || !canOpen(s) ? undefined : HOVER}
         >
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Box position="relative" flexDirection="row" alignItems="center" gap={1} flexGrow={1} minWidth={0}>
@@ -1083,7 +1098,7 @@ export const register: Register = (on, options) => {
                   <Text dimColor> · {fmt(billed(s))}</Text>
                 </Text>
               </Box>
-              {!isSelf && !isRemote(s) && hit(`go-${s.id}`, `go:${s.id}`)}
+              {!isSelf && canOpen(s) && hit(`go-${s.id}`, `go:${s.id}`)}
             </Box>
             {kind === 'live' ? (
               <Box key={`xb-${s.id}`} position="relative" flexShrink={0} hover={HOVER_BG}>
@@ -1100,7 +1115,7 @@ export const register: Register = (on, options) => {
           {/* 纵向排列的 Box 会把里面的 Svg 图片拉满整宽（横向排列时图片只有默认宽度） */}
           <Box position="relative" flexDirection="column">
             <Svg source={lineSvg(st.frac, st.color)} alt={`${s.title}: ${st.text}`} height={6} />
-            {!isSelf && !isRemote(s) && hit(`go2-${s.id}`, `go:${s.id}`)}
+            {!isSelf && canOpen(s) && hit(`go2-${s.id}`, `go:${s.id}`)}
           </Box>
         </Box>
       )
@@ -1434,7 +1449,7 @@ export const register: Register = (on, options) => {
           {notice !== '' && <Text color={b.error ? 'red' : undefined} dimColor={!b.error}>{notice}</Text>}
           {list.map(s => {
             const isSelf = s.id === self
-            const canGo = s.link !== '' && !isSelf && !isRemote(s)
+            const canGo = goLink(s) !== '' && !isSelf
             const hid = hiddenOn(s)
 
             const frac = s.status === 'input' ? 1 : s.total > 0 ? s.done / s.total : s.status === 'done' || s.status === 'waiting' ? 1 : 0
@@ -1526,8 +1541,8 @@ export const register: Register = (on, options) => {
                 <Text>{right(s)}</Text>
                 <Text dimColor>{fmt(billed(s))} tok</Text>
               </Box>
-              {s.link !== '' && s.id !== self && !isRemote(s) && (
-                <Button key={`pane-go-${s.id}`} label="↗" plain dimColor onPress={() => void jump($, s.link, s.title)} />
+              {goLink(s) !== '' && s.id !== self && (
+                <Button key={`pane-go-${s.id}`} label="↗" plain dimColor onPress={() => void jump($, s)} />
               )}
               {hiddenOn(s) && (
                 <Button key={`pane-unhide-${s.id}`} label="Unhide" plain onPress={() => void setHidden($, s.id, false)} />

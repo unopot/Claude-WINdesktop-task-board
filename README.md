@@ -55,8 +55,8 @@ Do this on **every** computer that should take part.
 
 ### What you will see
 
-- Cards from another computer carry a grey tag with that computer's label in front of the title and are **read-only**: clicking cannot switch to a session on another machine. Expanding a running card's details works as usual.
-- The Details pane lists them too, tagged the same way.
+- Cards from another computer carry a grey tag with that computer's label in front of the title. Clicking one opens that session through **Remote Control**: the desktop app opens it as a Remote Control session. This needs Remote Control on for that session on its own computer (desktop app setting **Connect new sessions to Remote Control**). A card written by a version before 2.2.0 carries no Remote Control id and cannot be clicked. Expanding a running card's details works as usual.
+- The Details pane lists them too, tagged and clickable the same way.
 - **Hide** and the **Next step** switch stay per computer.
 - Delay = the 10-second snapshot cycle plus the drive's sync time: iCloud Drive and OneDrive usually a few seconds to a minute, Syncthing a second or two on a LAN.
 - A computer whose file is more than 10 minutes old is treated as offline and disappears from the board.
@@ -67,12 +67,13 @@ Do this on **every** computer that should take part.
 - Both computers must point at the **same folder of the same drive**. The paths differ per operating system, the folder does not.
 - Two computers with the same label show up as one. Change one label.
 - The drive must actually download the files (no "online-only" placeholders).
+- Clicking a card from another computer opens a session that does not connect: Remote Control is off for that session on its own computer, or the session was closed there. Turn on **Connect new sessions to Remote Control** in that computer's desktop app settings; it applies to sessions started after that.
 - Sync-conflict copies such as `Office 2.json` or `Office (1).json` are harmless: the newest copy of a session wins and the rest is ignored. Delete them when they pile up.
 - To turn sharing off on a computer, clear its Shared folder setting.
 
 ### What is shared
 
-Only what the board shows: session titles, project folder names, task step titles, progress, token counts, model names and subagent descriptions. Nothing from the conversations themselves, and nothing leaves your computers except through the synced drive you chose.
+Only what the board shows: session titles, project folder names, task step titles, progress, token counts, model names and subagent descriptions, plus each session's Remote Control id so the other computer can open it (Remote Control itself still needs your Claude sign-in). Nothing from the conversations themselves, and nothing leaves your computers except through the synced drive you chose.
 
 ## Requirements
 
@@ -138,14 +139,15 @@ Run `/plugin configure task-board@unopot-mods` in Claude Code:
 
 ## How it works and what it touches
 
-- Each session starts one small PowerShell process that reads the transcripts under `~/.claude/projects` incrementally every 3 seconds, plus the desktop app's session list for titles and links. Nothing leaves your machine; the plugin makes no network requests of its own.
+- Each session starts one small PowerShell process that reads the transcripts under `~/.claude/projects` incrementally every 3 seconds, plus the desktop app's session list for titles, links and Remote Control ids. Nothing leaves your machine; the plugin makes no network requests of its own.
 - A session marks itself as *needs input* when it raises a permission dialog, `AskUserQuestion` or an MCP form, and clears the mark when the call finishes or the turn ends.
 - It writes four small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions), `task-board-snapshot.json` (the latest scan, so a new session shows the board at once) and the folder `task-board-input/` (the needs-input marks). With sharing on it also writes `<label>.json` into the shared folder. Delete them after uninstalling if you like.
+- Clicking a card opens a `claude://` link, which brings the desktop app to that session: `claude://claude.ai/epitaxy/local_…` for a session on this computer, `claude://claude.ai/code/session_…` (Remote Control) for one on another computer.
 
 ## Known limitations
 
 - Windows only; for a Mac use [Claude-MACdesktop-task-board](https://github.com/unopot/Claude-MACdesktop-task-board). Both can share one board (see above).
-- Cards from another computer cannot be clicked to switch to that session.
+- A card from another computer opens through Remote Control, so it only connects while Remote Control is on for that session on its own computer.
 - The plugin cannot see the moment you approve a permission dialog, so after you approve a long command the card stays yellow until that command finishes.
 - A subagent is attached to the step that was in progress when it started; subagents started between steps are listed under **Main**.
 

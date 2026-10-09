@@ -159,6 +159,9 @@ $rxArch = [regex]'"isArchived":(true|false)'
 $rxAppTitle = [regex]'"title":"((?:[^"\\]|\\.)*)"'
 # 应用重启后同一个会话会换一个新的 transcript，旧的 id 记在 priorCliSessionIds 里
 $rxPrior = [regex]'"priorCliSessionIds":\[([^\]]*)\]'
+# Remote Control 的会话编号（session_…）：别的电脑点这张卡时用它打开；开关过几次会有几个，最后一个是现在的
+$rxBridge = [regex]'"bridgeSessionIds":\[([^\]]*)\]'
+$rxBridgeId = [regex]'"((?:cse|session)_[A-Za-z0-9_-]+)"'
 $rxQuoted = [regex]'"([^"]+)"'
 
 function Get-DesktopMap {
@@ -176,9 +179,15 @@ function Get-DesktopMap {
         archived = ($a.Success -and $a.Groups[1].Value -eq 'true')
         title = if ($t.Success) { Unesc $t.Groups[1].Value } else { '' }
         prior = @()
+        bridge = ''
       }
       $p = $rxPrior.Match($txt)
       if ($p.Success) { $c.prior = @($rxQuoted.Matches($p.Groups[1].Value) | ForEach-Object { $_.Groups[1].Value }) }
+      $br = $rxBridge.Match($txt)
+      if ($br.Success) {
+        $ids = @($rxBridgeId.Matches($br.Groups[1].Value) | ForEach-Object { $_.Groups[1].Value })
+        if ($ids.Count -gt 0) { $c.bridge = $ids[-1] }
+      }
       $meta[$f.FullName] = $c
     }
     if ($c.cli) { $map[$c.cli] = $c }
@@ -318,8 +327,9 @@ do {
     $d = $desk[$id]
     $title = if ($d -and $d.title) { $d.title } elseif ($st.title) { $st.title } elseif ($st.prompt) { $st.prompt } else { $id.Substring(0, 8) }
     $link = if ($d -and $d.local) { "claude://claude.ai/epitaxy/$($d.local)" } else { '' }
+    $bridge = if ($d -and $d.bridge) { $d.bridge } else { '' }
     [ordered]@{
-      id = $id; title = $title; link = $link; project = (Split-Path $st.cwd -Leaf); status = $status
+      id = $id; title = $title; link = $link; bridge = $bridge; project = (Split-Path $st.cwd -Leaf); status = $status
       ageSec = [int]$age; cacheAgeSec = $cacheAge; done = $done; total = $total; current = $current
       input = $st.tin + $sub.tin; cacheWrite = $st.tcw + $sub.tcw; cacheRead = $st.tcr + $sub.tcr; output = $st.tout + $sub.tout
       subagents = $sub.n; subActive = $sub.active
