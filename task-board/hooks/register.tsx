@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { Board, Fold, NextView, Prefs, ScanLine, SessionRow, SessionStatus, SubRow, Suggestion, Usage } from '../types'
 import { costOf, forkPrompt, nextOptions, parseSuggestions, skillList } from './next-steps'
-import { chevronSvg, clock, dur, elapsed, eyeOffSvg, foldSvg, freshest, isHidden, lastReqMs, limitNow, mainLine, mergeRemote, modelName, moreSubs, osLabel, percent, planOpen, pruneHidden, rebaseScan, resetIn, ringHex, ringSvg, segSvg, stagesOf, stepLines, subsByStep } from './plan'
+import { chevronSvg, clock, dur, elapsed, eyeOffSvg, foldSvg, freshest, isHidden, lastReqMs, limitNow, mainLine, mergeRemote, modelName, moreSubs, percent, planOpen, pruneHidden, rebaseScan, resetIn, ringHex, ringSvg, segSvg, stagesOf, stepLines, subsByStep } from './plan'
 
 const PANE = 'task-board'
 const TITLE = 'Sessions'
@@ -21,6 +21,8 @@ const homeOf = ($: EngineInterface) => $.env.get('USERPROFILE')
 const snapshotPath = (home: string) => `${home}\\.claude\\task-board-snapshot.json`
 /** 交给 Windows 打开 claude:// 链接，Claude 应用会切到对应会话。 */
 const openArgv = (link: string) => ['rundll32.exe', 'url.dll,FileProtocolHandler', link]
+/** 本机标签的默认值（设置项 deviceName 为空时用）：卡片上的灰色小标签、共享目录里的文件名都用它；有几台机器就各设各的。 */
+const DEFAULT_DEVICE = 'Win'
 /** 跨设备共享目录的默认位置（iCloud Drive；开头的 ~ 由扫描脚本展开成用户主目录）。 */
 const DEFAULT_SHARED = '~/iCloudDrive/Claude Code/task-board-shared'
 
@@ -43,7 +45,7 @@ const ACTIVE_SEC = 60 * 60
 /** 提示缓存有效期和快过期提醒（秒），register 时按插件选项设置。 */
 let TTL_SEC = 60 * 60
 let WARN_SEC = 5 * 60
-/** 跨设备共享目录（空 = 不共享）和本机在目录里的名字（空 = 主机名），register 时按插件选项设置，传给扫描进程。 */
+/** 跨设备共享目录（空 = 不共享）和本机标签（卡片标签 + 共享目录里的文件名；空 = 平台默认），register 时按插件选项设置，传给扫描进程。 */
 let SHARED_DIR = ''
 let DEVICE = ''
 
@@ -87,7 +89,7 @@ const HEX: Record<SessionStatus, string> = { input: '#f5b324', running: '#3b82f6
 /** 还在这一轮里的会话（左栏）：在等我、在跑、停在工具调用上。 */
 const isLive = (s: SessionRow) => s.status === 'input' || s.status === 'running' || s.status === 'waiting'
 
-/** 别的电脑上的会话（经共享目录读到）：只能看，不能点跳转（claude:// 只能切本机的会话）。 */
+/** 别的电脑上的会话（经共享目录读到，device = 那台电脑的标签）：只能看，不能点跳转（claude:// 只能切本机的会话）。 */
 const isRemote = (s: SessionRow) => s.device !== undefined
 
 /** 细圆角进度条（仿用量页）：淡色轨道 + 按比例的实色填充，不做动画。 */
@@ -600,7 +602,7 @@ export const register: Register = (on, options) => {
   TTL_SEC = Math.max(1, typeof options?.cacheTtlMinutes === 'number' ? options.cacheTtlMinutes : 60) * 60
   WARN_SEC = Math.max(0, typeof options?.cacheWarnMinutes === 'number' ? options.cacheWarnMinutes : 5) * 60
   SHARED_DIR = typeof options?.sharedDir === 'string' ? options.sharedDir.trim() : DEFAULT_SHARED
-  DEVICE = typeof options?.deviceName === 'string' ? options.deviceName.trim() : ''
+  DEVICE = (typeof options?.deviceName === 'string' ? options.deviceName.trim() : '') || DEFAULT_DEVICE
   const nx = nextOptions(options)
 
   // 新一轮开始（打字或别的方式）就收起旧建议。
@@ -737,9 +739,9 @@ export const register: Register = (on, options) => {
       const pill = (key: string) => (
         <Text key={key} bold color={ACCENT} backgroundColor={ACCENT_BG}> Current </Text>
       )
-      // 别的电脑的会话：标题前一个灰色小标签（Win / Mac），和 Current 同款
+      // 别的电脑的会话：标题前一个灰色小标签（那台电脑自己设的标签，如 Win / Mac），和 Current 同款
       const tag = (key: string, s: SessionRow) => (
-        <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${osLabel(s.os)} `}</Text>
+        <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${s.device} `}</Text>
       )
       // 用量圆环；收起时那一行太挤，只留百分比，不写多久重置
       const usageMini = (withReset: boolean) =>
@@ -1032,9 +1034,9 @@ export const register: Register = (on, options) => {
     const pill = (key: string) => (
       <Text key={key} bold color={ACCENT} backgroundColor={ACCENT_BG}> Current </Text>
     )
-    // 别的电脑的会话：标题前一个灰色小标签（Win / Mac），和 Current 同款；这种卡只能看，不挂点击层
+    // 别的电脑的会话：标题前一个灰色小标签（那台电脑自己设的标签，如 Win / Mac），和 Current 同款；这种卡只能看，不挂点击层
     const tag = (key: string, s: SessionRow) => (
-      <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${osLabel(s.os)} `}</Text>
+      <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${s.device} `}</Text>
     )
 
     // 每张卡片两行（和 Details 窗一样）：
@@ -1389,7 +1391,6 @@ export const register: Register = (on, options) => {
       const left = showsCache(s) ? cacheLeft(s) : null
       return [
         s.id === self ? 'this session' : '',
-        s.device !== undefined ? `on ${s.device}` : '',
         hiddenOn(s) ? 'hidden from board' : '',
         s.project,
         s.current ? `▸ ${s.current}` : '',
@@ -1454,7 +1455,7 @@ export const register: Register = (on, options) => {
                   <Box position="relative" flexDirection="row" alignItems="center" gap={1} flexGrow={1}>
                     {isRemote(s) && (
                       <Box flexShrink={0} paddingX={1} backgroundColor={HOVER_BG.backgroundColor}>
-                        <Text bold dimColor>{osLabel(s.os)}</Text>
+                        <Text bold dimColor>{s.device}</Text>
                       </Box>
                     )}
                     <Box flexShrink={1}>
@@ -1554,7 +1555,7 @@ export const register: Register = (on, options) => {
         {list.map(s => (
           <Box flexDirection="column" marginTop={1}>
             <Box flexDirection="row">
-              <Text bold>{fit(isRemote(s) ? `${osLabel(s.os)} · ${s.title}` : s.title, titleCols)} </Text>
+              <Text bold>{fit(isRemote(s) ? `${s.device} · ${s.title}` : s.title, titleCols)} </Text>
               <Text color={COLOR[s.status]}>{bar(s, barCols)}</Text>
               <Text> {fit(right(s), 14)}</Text>
               <Text>{fmt(billed(s)).padStart(8)}</Text>

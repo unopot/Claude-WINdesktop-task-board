@@ -1,7 +1,7 @@
 param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
 # 增量扫描 ~/.claude/projects 下各会话的 transcript，每轮输出一行 JSON。
 #   -Shared DIR  跨设备共享目录（同步盘里）：每 10 秒把本机快照写成 DIR\<Device>.json，每轮读目录里其他电脑的快照附在 remote 里
-#   -Device NAME 本机在共享目录里的名字（空 = 主机名）
+#   -Device NAME 本机标签（卡片上的灰色小标签，也是共享目录里的文件名；空 = Win）
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Join-Path $env:USERPROFILE '.claude\projects'
 # 全局开关（所有会话共用）：任务板上按一下就改这个文件，各会话的扫描进程每轮都重读
@@ -14,9 +14,9 @@ New-Item -ItemType Directory -Force $inputDir | Out-Null
 # 最近一轮的输出（所有会话共用）：新开的会话先显示它，不用等自己的扫描进程读完所有 transcript
 $snapPath = Join-Path $env:USERPROFILE '.claude\task-board-snapshot.json'
 $lastSnap = [datetime]::MinValue
-# 跨设备共享：本机的名字和系统（卡片上的小标签写 Win / Mac）；共享目录开头的 ~ = 用户主目录
+# 跨设备共享：本机标签（用户每台机器各设一个，默认 Win）和系统；共享目录开头的 ~ = 用户主目录
 $os = 'win'
-if (-not $Device) { $Device = $env:COMPUTERNAME }
+if (-not $Device) { $Device = 'Win' }
 if ($Shared -match '^~([\\/]|$)') { $Shared = Join-Path $env:USERPROFILE $Shared.Substring(2) }
 if ($Shared) {
   New-Item -ItemType Directory -Force $Shared | Out-Null

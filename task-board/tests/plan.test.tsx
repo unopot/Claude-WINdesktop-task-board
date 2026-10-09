@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { clock, dur, elapsed, foldSvg, freshest, isHidden, limitNow, mainLine, mergeRemote, modelName, osLabel, percent, rebaseScan, resetIn, ringSvg, segSvg, splitStage, stagesOf, stepLines, subsByStep } from '../hooks/plan'
+import { clock, dur, elapsed, foldSvg, freshest, isHidden, limitNow, mainLine, mergeRemote, modelName, percent, rebaseScan, resetIn, ringSvg, segSvg, splitStage, stagesOf, stepLines, subsByStep } from '../hooks/plan'
 
 test('阶段：按 “阶段名: 步骤名” 分组，没前缀的跟上一个阶段，全无前缀 = 一个阶段', async () => {
   const g = stagesOf([
@@ -507,10 +507,9 @@ test('跨设备：别的电脑的快照并入会话，秒数按本机时间推�
   const m1 = s.find(x => x.id === 'm1')
   expect([m1?.ageSec, m1?.cacheAgeSec, m1?.turnSec]).toEqual([18, 38, 108])
   expect(mergeRemote({ at, sessions: [row('a', '本机', 'running', 5)] }, 600).map(x => x.id)).toEqual(['a'])
-  expect([osLabel('win'), osLabel('mac'), osLabel('linux'), osLabel(undefined)]).toEqual(['Win', 'Mac', 'linux', ''])
 })
 
-test('桌面：别的电脑的会话带灰色 Mac / Win 标签、不可点跳转；本机的照旧可点', async ($, on) => {
+test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）、不可点跳转；本机的照旧可点', async ($, on) => {
   const at = Date.now()
   const board = {
     at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
@@ -524,8 +523,8 @@ test('桌面：别的电脑的会话带灰色 Mac / Win 标签、不可点跳转
   on('ui.log', async () => ({ value: undefined }))
   const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
   expect(await ui.find({ key: 'row-m' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^ Mac $/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^ Win $/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^ MacBook $/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ Mac $/ })).toBeUndefined()
   // 远端卡没有跳转点击层；本机别的会话有
   expect(await ui.find({ key: 'go-m' })).toBeUndefined()
   expect(await ui.find({ key: 'go2-m' })).toBeUndefined()
@@ -537,7 +536,7 @@ test('桌面：别的电脑的会话带灰色 Mac / Win 标签、不可点跳转
   await ui.unmount()
 })
 
-test('Details 窗：别的电脑的会话有 Mac / Win 标签和 “on 设备名”，没有跳转点击层', async ($, on) => {
+test('Details 窗：别的电脑的会话有那台电脑的标签，没有跳转点击层', async ($, on) => {
   const at = Date.now()
   const board = {
     at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
@@ -553,8 +552,8 @@ test('Details 窗：别的电脑的会话有 Mac / Win 标签和 “on 设备名
     plugin: 'task-board', surface: 'desktop', component: 'Pane', requestId: 'task-board',
     props: { title: 'Sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
   })
-  expect(await ui.find({ type: 'Text', text: /^Win$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /on WinPC/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^WinPC$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Win$/ })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go-m' })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go2-m' })).toBeUndefined()
   await ui.unmount()

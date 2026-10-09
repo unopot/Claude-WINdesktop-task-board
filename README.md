@@ -31,18 +31,48 @@ Interactions:
 
 ## See sessions from your other computers
 
-If you also run Claude Code on a Mac, the board can show that computer's sessions too, and the Mac board can show this one's. Install the Mac version ([Claude-MACdesktop-task-board](https://github.com/unopot/Claude-MACdesktop-task-board)) there; both plugins then share one folder in a synced drive.
+The board can also show the Claude Code sessions running on your other computers (any mix of Windows PCs and Macs), each card tagged with a short label such as **Win**, **Mac**, **Office** or **Laptop**.
 
-By default that folder is **`~/iCloudDrive/Claude Code/task-board-shared`** (iCloud Drive). Each computer writes its own snapshot there every 10 seconds and reads the others'. Cards from another computer carry a grey **Win** or **Mac** tag in front of the title, and the Details pane says which computer they are on.
+Nothing talks over the network. Each computer writes one small file into a folder inside a drive you already sync (iCloud Drive, OneDrive, Google Drive, Dropbox, Syncthing, …) and reads the files the others wrote. If you are reading this with Claude, let it do the steps below; it only needs to know which synced drive you use and what you want each computer to be called.
 
-What to expect:
+### Set-up, step by step
 
-- Remote cards are **read-only**: clicking one cannot switch to a session on another machine. Expanding a running card's details works as usual.
+Do this on **every** computer that should take part.
+
+1. **Install the plugin for that computer's operating system.** Windows is this repository; for a Mac use [Claude-MACdesktop-task-board](https://github.com/unopot/Claude-MACdesktop-task-board). Follow its *Install* section (marketplace add, plugin install, full restart of the desktop app).
+2. **Pick one folder in a synced drive** and use the same folder on every computer. The default is iCloud Drive:
+
+   | | Shared folder setting |
+   | --- | --- |
+   | Windows | `~/iCloudDrive/Claude Code/task-board-shared` |
+   | macOS | `~/Library/Mobile Documents/com~apple~CloudDocs/Claude Code/task-board-shared` |
+
+   For another drive, point the setting at a sub-folder of that drive on each computer, in that computer's own path form, for example `~/OneDrive/Claude Code/task-board-shared`, `~/Google Drive/My Drive/Claude Code/task-board-shared` or `~/Sync/task-board-shared` (Syncthing). `~` means the home folder; the folder is created if missing. If the drive offers "online-only" / "files on demand", mark this folder as always kept on the device.
+3. **Give the computer a label.** Run `/plugin configure task-board@unopot-mods` and set **This computer's label**: the default is **Win** here and **Mac** on a Mac. With two computers of the same kind, change one of them (Office, Laptop, Studio, …). Labels must be different on every computer: the label is also the file name in the shared folder, and two computers with the same label overwrite each other's file.
+4. **Set the Shared folder** in the same settings screen if you are not using the iCloud default.
+5. **Quit the desktop app completely and open it again**, then send one message in any session. Within about 10 seconds the shared folder contains `<label>.json` for this computer.
+6. **Repeat on the next computer.** Once two computers have written their files, each board shows the other's sessions after the drive has synced (usually a few seconds to a minute).
+
+### What you will see
+
+- Cards from another computer carry a grey tag with that computer's label in front of the title and are **read-only**: clicking cannot switch to a session on another machine. Expanding a running card's details works as usual.
+- The Details pane lists them too, tagged the same way.
 - **Hide** and the **Next step** switch stay per computer.
-- Delay = the 10-second snapshot cycle plus the drive's sync time: iCloud Drive usually a few seconds to a minute, OneDrive similar, Syncthing a second or two on a LAN.
-- A computer whose snapshot is more than 10 minutes old is treated as offline and disappears from the board.
-- To use OneDrive, Syncthing or another folder, change the **Shared folder** setting on both computers to the same place (`~` means your home folder). Clear it to turn sharing off.
-- Nothing leaves your computers except through the synced drive you chose: the snapshot is the same data the board shows (session titles, progress, token counts), nothing from the conversations themselves.
+- Delay = the 10-second snapshot cycle plus the drive's sync time: iCloud Drive and OneDrive usually a few seconds to a minute, Syncthing a second or two on a LAN.
+- A computer whose file is more than 10 minutes old is treated as offline and disappears from the board.
+
+### If the other computer does not show up
+
+- Look in the shared folder: there must be one `<label>.json` per computer, updated every 10 seconds while a session is open. A missing file means that computer has not written yet (plugin not installed, app not restarted, or no session open); a file older than 10 minutes means its last session closed or the drive stopped syncing.
+- Both computers must point at the **same folder of the same drive**. The paths differ per operating system, the folder does not.
+- Two computers with the same label show up as one. Change one label.
+- The drive must actually download the files (no "online-only" placeholders).
+- Sync-conflict copies such as `Office 2.json` or `Office (1).json` are harmless: the newest copy of a session wins and the rest is ignored. Delete them when they pile up.
+- To turn sharing off on a computer, clear its Shared folder setting.
+
+### What is shared
+
+Only what the board shows: session titles, project folder names, task step titles, progress, token counts, model names and subagent descriptions. Nothing from the conversations themselves, and nothing leaves your computers except through the synced drive you chose.
 
 ## Requirements
 
@@ -103,14 +133,14 @@ Run `/plugin configure task-board@unopot-mods` in Claude Code:
 | Warn before cache expires | 5 min | 0 turns the toast off |
 | Skip suggestions after short answers | 80 characters | no suggestion, and no extra request, after shorter answers |
 | Let suggestions use skills and slash commands | on | a suggestion may be `/skill-name` |
-| Shared folder for other computers | `~/iCloudDrive/Claude Code/task-board-shared` | a folder in a synced drive; empty = this computer only |
-| This computer's name in the shared folder | the host name | the file name used in the shared folder |
+| Shared folder for other computers | `~/iCloudDrive/Claude Code/task-board-shared` | a folder in a synced drive, same on every computer (see above); empty = this computer only |
+| This computer's label | Win | the grey tag shown on this computer's cards elsewhere, and its file name in the shared folder; unique per computer |
 
 ## How it works and what it touches
 
 - Each session starts one small PowerShell process that reads the transcripts under `~/.claude/projects` incrementally every 3 seconds, plus the desktop app's session list for titles and links. Nothing leaves your machine; the plugin makes no network requests of its own.
 - A session marks itself as *needs input* when it raises a permission dialog, `AskUserQuestion` or an MCP form, and clears the mark when the call finishes or the turn ends.
-- It writes four small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions), `task-board-snapshot.json` (the latest scan, so a new session shows the board at once) and the folder `task-board-input/` (the needs-input marks). With sharing on it also writes `<computer name>.json` into the shared folder. Delete them after uninstalling if you like.
+- It writes four small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions), `task-board-snapshot.json` (the latest scan, so a new session shows the board at once) and the folder `task-board-input/` (the needs-input marks). With sharing on it also writes `<label>.json` into the shared folder. Delete them after uninstalling if you like.
 
 ## Known limitations
 

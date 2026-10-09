@@ -1,6 +1,6 @@
 ﻿{
   "name": "task-board",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "author": {
     "name": "unopot"
   },
@@ -44,10 +44,10 @@
     },
     "deviceName": {
       "type": "string",
-      "title": "This computer's name in the shared folder",
-      "description": "File name used in the shared folder. Empty = the computer's host name.",
+      "title": "This computer's label",
+      "description": "Short name shown as a grey tag on this computer's cards on the other computers, and used as its file name in the shared folder. Give every computer a different one.",
       "required": false,
-      "default": ""
+      "default": "Win"
     }
   }
 }
