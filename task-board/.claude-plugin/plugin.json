@@ -1,6 +1,6 @@
 ﻿{
   "name": "task-board",
-  "version": "1.9.7",
+  "version": "2.1.0",
   "author": {
     "name": "unopot"
   },
@@ -34,6 +34,20 @@
       "description": "Give the suggester this session's skills and slash commands so a suggestion can be /skill-name.",
       "required": false,
       "default": true
+    },
+    "sharedDir": {
+      "type": "string",
+      "title": "Shared folder for other computers",
+      "description": "A folder in a synced drive (iCloud Drive, OneDrive, Syncthing). Each computer writes its sessions there and the board shows everyone's. Empty = this computer only. ~ = your home folder.",
+      "required": false,
+      "default": "~/iCloudDrive/Claude Code/task-board-shared"
+    },
+    "deviceName": {
+      "type": "string",
+      "title": "This computer's name in the shared folder",
+      "description": "File name used in the shared folder. Empty = the computer's host name.",
+      "required": false,
+      "default": ""
     }
   }
 }

@@ -27,7 +27,22 @@ Interactions:
 - Click a card to switch to that session.
 - The arrow on a running card opens its details above the board: a stage strip, one row per step with its time, subagents under the step that started them (type, model, effort, current tool, task, tool calls, time), and a **Main** row with the session's own model and effort ("no subagents this turn" when there are none).
 - The eye icon on a finished card hides it; it comes back by itself when that session gets a new request. **Details** (or `/task-board`) opens a pane listing every recent session, hidden ones included, with **Unhide**.
-- **Suggest next step** (on until you switch it off; one switch for all sessions): after each answer, fork the session once to propose three next prompts; clicking one fills the prompt box and never sends it. It costs one extra request per turn, so switch it off on the board if you do not want that.
+- **Next step** (on until you switch it off; one switch for all sessions): after each answer, fork the session once to propose three next prompts; clicking one fills the prompt box and never sends it. It costs one extra request per turn, so switch it off on the board if you do not want that.
+
+## See sessions from your other computers
+
+If you also run Claude Code on a Mac, the board can show that computer's sessions too, and the Mac board can show this one's. Install the Mac version ([Claude-MACdesktop-task-board](https://github.com/unopot/Claude-MACdesktop-task-board)) there; both plugins then share one folder in a synced drive.
+
+By default that folder is **`~/iCloudDrive/Claude Code/task-board-shared`** (iCloud Drive). Each computer writes its own snapshot there every 10 seconds and reads the others'. Cards from another computer carry a grey **Win** or **Mac** tag in front of the title, and the Details pane says which computer they are on.
+
+What to expect:
+
+- Remote cards are **read-only**: clicking one cannot switch to a session on another machine. Expanding a running card's details works as usual.
+- **Hide** and the **Next step** switch stay per computer.
+- Delay = the 10-second snapshot cycle plus the drive's sync time: iCloud Drive usually a few seconds to a minute, OneDrive similar, Syncthing a second or two on a LAN.
+- A computer whose snapshot is more than 10 minutes old is treated as offline and disappears from the board.
+- To use OneDrive, Syncthing or another folder, change the **Shared folder** setting on both computers to the same place (`~` means your home folder). Clear it to turn sharing off.
+- Nothing leaves your computers except through the synced drive you chose: the snapshot is the same data the board shows (session titles, progress, token counts), nothing from the conversations themselves.
 
 ## Requirements
 
@@ -88,16 +103,19 @@ Run `/plugin configure task-board@unopot-mods` in Claude Code:
 | Warn before cache expires | 5 min | 0 turns the toast off |
 | Skip suggestions after short answers | 80 characters | no suggestion, and no extra request, after shorter answers |
 | Let suggestions use skills and slash commands | on | a suggestion may be `/skill-name` |
+| Shared folder for other computers | `~/iCloudDrive/Claude Code/task-board-shared` | a folder in a synced drive; empty = this computer only |
+| This computer's name in the shared folder | the host name | the file name used in the shared folder |
 
 ## How it works and what it touches
 
 - Each session starts one small PowerShell process that reads the transcripts under `~/.claude/projects` incrementally every 3 seconds, plus the desktop app's session list for titles and links. Nothing leaves your machine; the plugin makes no network requests of its own.
 - A session marks itself as *needs input* when it raises a permission dialog, `AskUserQuestion` or an MCP form, and clears the mark when the call finishes or the turn ends.
-- It writes three small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions) and the folder `task-board-input/` (the needs-input marks). Delete them after uninstalling if you like.
+- It writes four small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions), `task-board-snapshot.json` (the latest scan, so a new session shows the board at once) and the folder `task-board-input/` (the needs-input marks). With sharing on it also writes `<computer name>.json` into the shared folder. Delete them after uninstalling if you like.
 
 ## Known limitations
 
-- Windows only for now.
+- Windows only; for a Mac use [Claude-MACdesktop-task-board](https://github.com/unopot/Claude-MACdesktop-task-board). Both can share one board (see above).
+- Cards from another computer cannot be clicked to switch to that session.
 - The plugin cannot see the moment you approve a permission dialog, so after you approve a long command the card stays yellow until that command finishes.
 - A subagent is attached to the step that was in progress when it started; subagents started between steps are listed under **Main**.
 

@@ -30,6 +30,9 @@ export type SessionRow = {
   /** 主会话自己用的模型和推理强度（最后一次回答的）；读不到为 null */
   model?: string | null
   effort?: string | null
+  /** 别的电脑上的会话（经共享目录读到）：device = 那台电脑在共享目录里的名字，os = win / mac；本机的会话没有这两个字段 */
+  device?: string
+  os?: string
 }
 
 export type StepStatus = 'pending' | 'in_progress' | 'completed'
@@ -72,7 +75,14 @@ export type Board = {
 }
 
 /** 扫描进程输出的一行（也是共用快照 ~/.claude/task-board-snapshot.json 的内容）；usageText = 用量文件原文 */
-export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | 'usagePath' | 'inputDir'> & { usageText?: string }
+export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | 'usagePath' | 'inputDir'> & {
+  usageText?: string
+  /** 本机的名字（共享目录里的文件名）和系统（win / mac） */
+  device?: string
+  os?: string
+  /** 共享目录里其他设备的快照，扫描进程原样附上（各自带 device / os / at），由 plan.ts 的 mergeRemote 并入 */
+  remote?: ScanLine[]
+}
 
 /** 一个额度窗口：five_hour = 设置页 Usage 里的 Current session，seven_day = 每周额度 */
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }

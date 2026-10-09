@@ -1,21 +1,21 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { clock, dur, elapsed, foldSvg, freshest, isHidden, limitNow, mainLine, modelName, percent, rebaseScan, resetIn, ringSvg, segSvg, splitStage, stagesOf, stepLines, subsByStep } from '../hooks/plan'
+import { clock, dur, elapsed, foldSvg, freshest, isHidden, limitNow, mainLine, mergeRemote, modelName, osLabel, percent, rebaseScan, resetIn, ringSvg, segSvg, splitStage, stagesOf, stepLines, subsByStep } from '../hooks/plan'
 
 test('阶段：按 “阶段名: 步骤名” 分组，没前缀的跟上一个阶段，全无前缀 = 一个阶段', async () => {
   const g = stagesOf([
-    { t: 'Survey: Read doors', s: 'completed', sec: 130 },
+    { t: 'Survey: Read notes', s: 'completed', sec: 130 },
     { t: 'Survey：Probe schema', s: 'completed', sec: 330 },
     { t: 'Renumber: Set prefix', s: 'completed', sec: 192 },
-    { t: 'Renumber 14 doors', s: 'in_progress', sec: 72 },
-    { t: 'Export: A-201', s: 'pending', sec: -1 },
+    { t: 'Renumber 14 files', s: 'in_progress', sec: 72 },
+    { t: 'Export: PDF', s: 'pending', sec: -1 },
   ])
   expect(g.map(x => [x.name, x.done, x.total, x.state, x.sec])).toEqual([
     ['Survey', 2, 2, 'done', 460],
     ['Renumber', 1, 2, 'current', 264],
     ['Export', 0, 1, 'todo', 0],
   ])
-  expect(g[1]?.steps.map(x => x.t)).toEqual(['Set prefix', 'Renumber 14 doors'])
+  expect(g[1]?.steps.map(x => x.t)).toEqual(['Set prefix', 'Renumber 14 files'])
   expect(stagesOf([{ t: 'a', s: 'pending', sec: -1 }, { t: 'b', s: 'pending', sec: -1 }]).length).toBe(1)
   // 太长的“前缀”不算阶段
   expect(splitStage('This is a long sentence that happens to have: a colon')).toBe(null)
@@ -55,15 +55,15 @@ test('任务板：本会话有 Current 标记，展开明细，隐藏已完成�
     at, tick: 1, prefs: { nextSteps: false, hidden: { e: at - 600_000 } }, prefsPath: 'C:/x/prefs.json',
     usage: { at: at - 5000, limits: [{ kind: 'five_hour', percentUsed: 23.5, resetsAt: new Date(at + 7_980_000).toISOString() }] },
     sessions: [
-      row('a', 'Revit 门编号核对', 'running', 5, {
+      row('a', '整理发布说明', 'running', 5, {
         done: 1, total: 3, planSec: 724, turnSec: 900, subActive: 2, model: 'claude-opus-5-5', effort: 'high',
         steps: [
-          { t: 'Survey: Read doors', s: 'completed', sec: 130 },
-          { t: 'Renumber: Renumber 14 doors', s: 'in_progress', sec: 72 },
-          { t: 'Export: A-201', s: 'pending', sec: -1 },
+          { t: 'Survey: Read notes', s: 'completed', sec: 130 },
+          { t: 'Renumber: Renumber 14 files', s: 'in_progress', sec: 72 },
+          { t: 'Export: PDF', s: 'pending', sec: -1 },
         ],
         subs: [
-          { name: 'Explore', desc: 'door tags', model: 'claude-haiku-4-5-20251001', tool: 'Grep', sec: 34, active: true, calls: 7, step: 1 },
+          { name: 'Explore', desc: 'old notes', model: 'claude-haiku-4-5-20251001', tool: 'Grep', sec: 34, active: true, calls: 7, step: 1 },
           { name: 'general-purpose', desc: 'schedule', model: 'claude-sonnet-5-5', effort: 'medium', tool: 'Bash', sec: 65, active: true, calls: 1 },
           { name: 'Explore', desc: 'skill notes', model: 'claude-haiku-4-5-20251001', tool: '', sec: 18, active: false, calls: 3 },
           { name: 'Explore', desc: 'old 1', model: 'claude-haiku-4-5-20251001', tool: '', sec: 9, active: false, calls: 2 },
@@ -120,14 +120,14 @@ test('任务板：本会话有 Current 标记，展开明细，隐藏已完成�
   // 阶段条：名字后面跟状态；步骤表：每步一行，耗时单独一列
   expect(await ui.find({ type: 'Text', text: /^ 0% · 1m 12s$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^ ✓ 2m 10s$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Read doors$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Read notes$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^2m 10s$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /haiku 4\.5 · Grep · door tags/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /haiku 4\.5 · Grep · old notes/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /✓ 18s/ })).toBeDefined()
   // 推理强度、工具调用次数、画不下的汇总成一行
   expect(await ui.find({ type: 'Text', text: /sonnet 5\.5 · medium · Bash · schedule/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^7 calls$/ })).toBeDefined()
-  // 第一个子代理挂在派它的那一步（Renumber 14 doors）下面；其余不属于任何一步，列在 Main 行下面，最多 3 行
+  // 第一个子代理挂在派它的那一步（Renumber 14 files）下面；其余不属于任何一步，列在 Main 行下面，最多 3 行
   expect(await ui.find({ type: 'Text', text: /^\+1 more agent · 1 done$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /old 2/ })).toBeUndefined()
   // Main 行：主会话的模型、推理强度、这一轮的子代理数
@@ -237,12 +237,12 @@ test('needs input 标记：弹授权框时写本会话的标记文件，答完�
 test('步骤表：每个阶段只在第一行写名字；太长时先折做完的阶段，再折没开始的，当前阶段始终展开', async () => {
   const st = (stage: string, n: number, s: string) =>
     Array.from({ length: n }, (_, i) => ({ t: `${stage}: step ${i + 1}`, s, sec: s === 'pending' ? -1 : 10 }))
-  const short = stagesOf([...st('Survey', 2, 'completed'), ...st('CAD', 1, 'in_progress'), ...st('Revit', 1, 'pending')])
+  const short = stagesOf([...st('Survey', 2, 'completed'), ...st('Build', 1, 'in_progress'), ...st('Deploy', 1, 'pending')])
   expect(stepLines(short).map(l => [l.stage.name, l.first, l.step?.t ?? '(folded)'])).toEqual([
     ['Survey', true, 'step 1'],
     ['Survey', false, 'step 2'],
-    ['CAD', true, 'step 1'],
-    ['Revit', true, 'step 1'],
+    ['Build', true, 'step 1'],
+    ['Deploy', true, 'step 1'],
   ])
   // 3 + 3 + 3 + 3 = 12 行 > 8：Survey（做完）折成一行 → 10 行，还多 → Check / Ship（没开始）也折
   const long = stagesOf([...st('Survey', 3, 'completed'), ...st('Build', 3, 'in_progress'), ...st('Check', 3, 'pending'), ...st('Ship', 3, 'pending')])
@@ -280,11 +280,11 @@ test('手机：窄屏单栏，按钮代替点击层；展开明细、收起、�
       row('a', 'Refactor auth module', 'running', 5, {
         done: 1, total: 3, planSec: 724, turnSec: 900, subActive: 1, model: 'claude-opus-5-5', effort: 'high',
         steps: [
-          { t: 'Survey: Read doors', s: 'completed', sec: 130 },
-          { t: 'Renumber: Renumber 14 doors', s: 'in_progress', sec: 72 },
-          { t: 'Export: A-201', s: 'pending', sec: -1 },
+          { t: 'Survey: Read notes', s: 'completed', sec: 130 },
+          { t: 'Renumber: Renumber 14 files', s: 'in_progress', sec: 72 },
+          { t: 'Export: PDF', s: 'pending', sec: -1 },
         ],
-        subs: [{ name: 'Explore', desc: 'door tags', model: 'claude-haiku-4-5-20251001', tool: 'Grep', sec: 34, active: true, calls: 7, step: 1 }],
+        subs: [{ name: 'Explore', desc: 'old notes', model: 'claude-haiku-4-5-20251001', tool: 'Grep', sec: 34, active: true, calls: 7, step: 1 }],
       }),
       row('b', '本会话', 'running', 5, { turnSec: 200 }),
       row('q', '等我授权的会话', 'input', 5, { done: 2, total: 5 }),
@@ -328,9 +328,9 @@ test('手机：窄屏单栏，按钮代替点击层；展开明细、收起、�
   await ui.press({ key: 'm-x-a' })
   expect(await ui.find({ key: 'm-detail' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Renumber$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /^Renumber 14 doors$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Renumber 14 files$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^running 1m 12s$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /haiku 4\.5 · Grep · door tags/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /haiku 4\.5 · Grep · old notes/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^ · opus 5\.5 · high · 1 subagent this turn · 1 running$/ })).toBeDefined()
   await ui.press({ key: 'm-collapse' })
   expect(await ui.find({ key: 'm-detail' })).toBeUndefined()
@@ -482,4 +482,80 @@ test('收起箭头：灰色细线、不填底色；展开时向下、收起时�
   expect(foldSvg(true)).toMatch(/M7.5 12.75 11 9.25/)
   expect(foldSvg(false)).not.toMatch(/<rect/)
   expect(foldSvg(true)).toMatch(/fill="none" stroke="#8a877f"/)
+})
+
+test('跨设备：别的电脑的快照并入会话，秒数按本机时间推后；离线的设备、没名字的跳过；同一会话取最新的一份', async () => {
+  const at = 1_791_000_000_000
+  const got = {
+    at, device: 'WinPC', os: 'win', sessions: [row('a', '本机', 'running', 5), row('dup', '本机也有', 'done', 50)],
+    remote: [
+      { at: at - 8_000, device: 'MacBook', os: 'mac', sessions: [row('m1', 'Mac 上的', 'running', 30, { turnSec: 100 }), row('dup', '远端同 id', 'done', 1)] },
+      { at: at - 700_000, device: 'Old', os: 'mac', sessions: [row('o1', '离线的', 'running', 1)] },
+      // 同步盘的冲突副本：同一台电脑两份快照，同一会话取 at 新的那份
+      { at: at - 20_000, device: 'MacBook', os: 'mac', sessions: [row('m2', '旧副本', 'done', 1)] },
+      { at: at - 3_000, device: 'MacBook', os: 'mac', sessions: [row('m2', '新副本', 'done', 1)] },
+      { at, sessions: [row('x', '没名字', 'done', 1)] },
+    ],
+  }
+  const s = mergeRemote(got, 600)
+  expect(s.map(x => [x.id, x.title, x.device ?? '-', x.os ?? '-'])).toEqual([
+    ['a', '本机', '-', '-'],
+    ['dup', '本机也有', '-', '-'],
+    ['m1', 'Mac 上的', 'MacBook', 'mac'],
+    ['m2', '新副本', 'MacBook', 'mac'],
+  ])
+  const m1 = s.find(x => x.id === 'm1')
+  expect([m1?.ageSec, m1?.cacheAgeSec, m1?.turnSec]).toEqual([18, 38, 108])
+  expect(mergeRemote({ at, sessions: [row('a', '本机', 'running', 5)] }, 600).map(x => x.id)).toEqual(['a'])
+  expect([osLabel('win'), osLabel('mac'), osLabel('linux'), osLabel(undefined)]).toEqual(['Win', 'Mac', 'linux', ''])
+})
+
+test('桌面：别的电脑的会话带灰色 Mac / Win 标签、不可点跳转；本机的照旧可点', async ($, on) => {
+  const at = Date.now()
+  const board = {
+    at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
+    sessions: [row('b', '本会话', 'running', 5), row('c', '本机别的会话', 'done', 600), row('m', 'Mac 上的会话', 'running', 5, { device: 'MacBook', os: 'mac' })],
+  }
+  on('state.get', async (_$, e, next) => {
+    if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
+    if (e.plugin === 'task-board' && e.key === 'me') return { value: { value: 'b', version: 1 } }
+    return next(e)
+  })
+  on('ui.log', async () => ({ value: undefined }))
+  const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'row-m' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ Mac $/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^ Win $/ })).toBeUndefined()
+  // 远端卡没有跳转点击层；本机别的会话有
+  expect(await ui.find({ key: 'go-m' })).toBeUndefined()
+  expect(await ui.find({ key: 'go2-m' })).toBeUndefined()
+  expect(await ui.find({ key: 'go-c' })).toBeDefined()
+  // 远端卡的明细照样能展开，标题行也带标签
+  await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'x-m' })
+  expect(await ui.find({ key: 'detail' })).toBeDefined()
+  expect(await ui.find({ key: 'tag-detail' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Details 窗：别的电脑的会话有 Mac / Win 标签和 “on 设备名”，没有跳转点击层', async ($, on) => {
+  const at = Date.now()
+  const board = {
+    at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
+    sessions: [row('b', '本会话', 'running', 5), row('m', 'Win 上的会话', 'done', 30, { device: 'WinPC', os: 'win' })],
+  }
+  on('state.get', async (_$, e, next) => {
+    if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
+    if (e.plugin === 'task-board' && e.key === 'me') return { value: { value: 'b', version: 1 } }
+    return next(e)
+  })
+  on('ui.log', async () => ({ value: undefined }))
+  const ui = await $.ui.mount({
+    plugin: 'task-board', surface: 'desktop', component: 'Pane', requestId: 'task-board',
+    props: { title: 'Sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  })
+  expect(await ui.find({ type: 'Text', text: /^Win$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /on WinPC/ })).toBeDefined()
+  expect(await ui.find({ key: 'pane-go-m' })).toBeUndefined()
+  expect(await ui.find({ key: 'pane-go2-m' })).toBeUndefined()
+  await ui.unmount()
 })

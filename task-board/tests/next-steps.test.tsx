@@ -3,13 +3,13 @@ import { expect, test } from 'claude-code/testing'
 import { parseSuggestions } from '../hooks/next-steps'
 
 const REPLY =
-  '[{"label":"核对门编号","prompt":"用 rvt-mcp 核对 L2 门编号"},' +
+  '[{"label":"整理发布说明","prompt":"整理 v2.4 的发布说明"},' +
   '{"label":"收尾","prompt":"/task-closeout-vault"},' +
   '{"label":"假命令","prompt":"/no-such-skill 做点什么"}]'
 
 test('建议解析：去掉本会话没有的斜杠命令，最多三条', async () => {
   const items = parseSuggestions(`好的：\n${REPLY}`, new Set(['task-closeout-vault']))
-  expect(items.map(x => x.label)).toEqual(['核对门编号', '收尾'])
+  expect(items.map(x => x.label)).toEqual(['整理发布说明', '收尾'])
   expect(parseSuggestions('没有 JSON', null)).toEqual([])
 })
 
@@ -62,7 +62,7 @@ test('回答结束后 fork 出建议，点一下填进输入框', async ($, on) 
     // 终端是按钮；桌面是点击层，按下（down）那一刻就填，不等松开
     if (surface === 'terminal') await ui.press({ key: 'next-0' })
     else await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'hit-next-0' })
-    expect(filled.at(-1)).toBe('用 rvt-mcp 核对 L2 门编号')
+    expect(filled.at(-1)).toBe('整理 v2.4 的发布说明')
     expect(await ui.find({ key: 'next-0' })).toBeUndefined()
     await ui.unmount()
   }
@@ -86,7 +86,7 @@ test('原生风格任务板：每个会话一行带框，开关可见，过期�
   const board = {
     at: Date.now(), tick: 1, prefs: { nextSteps: true }, prefsPath: 'C:/x/prefs.json',
     sessions: [
-      row('a', 'Revit 门编号核对', 'running', 5),
+      row('a', '整理发布说明', 'running', 5),
       row('b', '拆分明细表到各地块', 'running', 5, 3, 5),
       row('c', '最后一轮 review 台去向', 'done', 1320),
       row('d', 'Old session', 'done', 4000),

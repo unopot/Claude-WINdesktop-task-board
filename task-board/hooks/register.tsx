@@ -3,10 +3,26 @@ import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { Board, Fold, NextView, Prefs, ScanLine, SessionRow, SessionStatus, SubRow, Suggestion, Usage } from '../types'
 import { costOf, forkPrompt, nextOptions, parseSuggestions, skillList } from './next-steps'
-import { chevronSvg, clock, dur, elapsed, eyeOffSvg, foldSvg, freshest, isHidden, lastReqMs, limitNow, mainLine, modelName, moreSubs, percent, planOpen, pruneHidden, rebaseScan, resetIn, ringHex, ringSvg, segSvg, stagesOf, stepLines, subsByStep } from './plan'
+import { chevronSvg, clock, dur, elapsed, eyeOffSvg, foldSvg, freshest, isHidden, lastReqMs, limitNow, mainLine, mergeRemote, modelName, moreSubs, osLabel, percent, planOpen, pruneHidden, rebaseScan, resetIn, ringHex, ringSvg, segSvg, stagesOf, stepLines, subsByStep } from './plan'
 
 const PANE = 'task-board'
 const TITLE = 'Sessions'
+
+// ── 平台相关：Windows 版和 macOS 版的 register.tsx 只有这一段不同 ──────────────────
+/** 后台扫描脚本（插件根目录下）。 */
+const SCAN_SCRIPT = 'scan.ps1'
+/** 启动扫描进程的命令行；shared 为空 = 不开跨设备共享。 */
+const scanArgv = (script: string, shared: string, device: string) => [
+  'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Hours', '24', '-Max', '12',
+  ...(shared === '' ? [] : ['-Shared', shared, '-Device', device]),
+]
+/** 用户主目录（$.env.get 的变量名必须写成字面量），和共用快照的路径。 */
+const homeOf = ($: EngineInterface) => $.env.get('USERPROFILE')
+const snapshotPath = (home: string) => `${home}\\.claude\\task-board-snapshot.json`
+/** 交给 Windows 打开 claude:// 链接，Claude 应用会切到对应会话。 */
+const openArgv = (link: string) => ['rundll32.exe', 'url.dll,FileProtocolHandler', link]
+/** 跨设备共享目录的默认位置（iCloud Drive；开头的 ~ 由扫描脚本展开成用户主目录）。 */
+const DEFAULT_SHARED = '~/iCloudDrive/Claude Code/task-board-shared'
 
 const board = atom({ plugin: 'task-board', key: 'board' } as const, { at: 0, tick: 0, sessions: [] } as Board)
 const me = atom({ plugin: 'task-board', key: 'me' } as const, '')
@@ -27,6 +43,9 @@ const ACTIVE_SEC = 60 * 60
 /** 提示缓存有效期和快过期提醒（秒），register 时按插件选项设置。 */
 let TTL_SEC = 60 * 60
 let WARN_SEC = 5 * 60
+/** 跨设备共享目录（空 = 不共享）和本机在目录里的名字（空 = 主机名），register 时按插件选项设置，传给扫描进程。 */
+let SHARED_DIR = ''
+let DEVICE = ''
 
 /** 缓存还剩几秒：从主 transcript 最后一次请求起算；没有请求过返回 null。 */
 const cacheLeft = (s: SessionRow) => (s.cacheAgeSec >= 0 ? TTL_SEC - s.cacheAgeSec : null)
@@ -67,6 +86,9 @@ const HEX: Record<SessionStatus, string> = { input: '#f5b324', running: '#3b82f6
 
 /** 还在这一轮里的会话（左栏）：在等我、在跑、停在工具调用上。 */
 const isLive = (s: SessionRow) => s.status === 'input' || s.status === 'running' || s.status === 'waiting'
+
+/** 别的电脑上的会话（经共享目录读到）：只能看，不能点跳转（claude:// 只能切本机的会话）。 */
+const isRemote = (s: SessionRow) => s.device !== undefined
 
 /** 细圆角进度条（仿用量页）：淡色轨道 + 按比例的实色填充，不做动画。 */
 function barSvg(s: SessionRow) {
@@ -135,9 +157,9 @@ async function publishStatus($: EngineInterface) {
 
 async function scriptPath($: EngineInterface) {
   const root = $.plugin.root.replace(/[\\/]+$/, '')
-  const here = `${root}/scan.ps1`
+  const here = `${root}/${SCAN_SCRIPT}`
   if (await $.fs.exists(here)) return here
-  return `${root.replace(/[\\/]\.claude-plugin$/, '')}/scan.ps1`
+  return `${root.replace(/[\\/]\.claude-plugin$/, '')}/${SCAN_SCRIPT}`
 }
 
 /** 已经为哪一次请求提醒过（最后请求时间，10 秒取整），同一次请求只提醒一回。 */
@@ -166,7 +188,7 @@ async function watch($: EngineInterface) {
   try {
     const script = await scriptPath($)
     const child = $.process.spawn({
-      argv: ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Hours', '24', '-Max', '12'],
+      argv: scanArgv(script, SHARED_DIR, DEVICE),
     })
     let pending = ''
     for await (const { stream, text } of child) {
@@ -201,12 +223,12 @@ async function watch($: EngineInterface) {
   }
 }
 
-/** 扫描进程的一行（或共用快照）→ 任务板的数据。 */
+/** 扫描进程的一行（或共用快照）→ 任务板的数据；别的电脑的快照（remote）并入 sessions。 */
 function boardFrom(got: ScanLine, b: Board): Board {
   return {
     at: got.at,
     tick: b.tick + 1,
-    sessions: got.sessions ?? [],
+    sessions: mergeRemote(got, SNAP_MAX_SEC),
     error: undefined,
     prefs: got.prefs,
     prefsPath: got.prefsPath,
@@ -225,11 +247,11 @@ const SNAP_MAX_SEC = 10 * 60
  */
 async function seedFromSnapshot($: EngineInterface) {
   if ((await read($, board)).at !== 0) return
-  const home = await $.env.get('USERPROFILE')
+  const home = await homeOf($)
   if (!home) return
   let got: ScanLine | null
   try {
-    got = rebaseScan(JSON.parse(await $.fs.read(`${home}\\.claude\\task-board-snapshot.json`)), await $.clock.now(), SNAP_MAX_SEC)
+    got = rebaseScan(JSON.parse(await $.fs.read(snapshotPath(home))), await $.clock.now(), SNAP_MAX_SEC)
   } catch {
     return // 还没有快照，或正好在换文件
   }
@@ -335,7 +357,7 @@ function rowState(s: SessionRow) {
 }
 
 
-/** 交给 Windows 打开 claude:// 链接，Claude 应用会切到对应会话。 */
+/** 打开 claude:// 链接（openArgv，平台相关），Claude 应用会切到对应会话。 */
 async function jump($: EngineInterface, link: string, title: string) {
   if (!/^claude:\/\/claude\.ai\/epitaxy\/local_[0-9a-f-]+$/.test(link)) {
     await $.ui.toast(`"${title}" has no link to switch to`)
@@ -343,7 +365,7 @@ async function jump($: EngineInterface, link: string, title: string) {
   }
   await $.ui.toast(`Switching to "${title}"…`)
   try {
-    const r = await $.process.run(['rundll32.exe', 'url.dll,FileProtocolHandler', link])
+    const r = await $.process.run(openArgv(link))
     if (r.exitCode !== 0) await $.ui.toast(`Switch failed (exit code ${r.exitCode})`)
   } catch (err) {
     await $.ui.toast(`Switch failed: ${String(err)}`)
@@ -577,6 +599,8 @@ async function act($: EngineInterface, a: string) {
 export const register: Register = (on, options) => {
   TTL_SEC = Math.max(1, typeof options?.cacheTtlMinutes === 'number' ? options.cacheTtlMinutes : 60) * 60
   WARN_SEC = Math.max(0, typeof options?.cacheWarnMinutes === 'number' ? options.cacheWarnMinutes : 5) * 60
+  SHARED_DIR = typeof options?.sharedDir === 'string' ? options.sharedDir.trim() : DEFAULT_SHARED
+  DEVICE = typeof options?.deviceName === 'string' ? options.deviceName.trim() : ''
   const nx = nextOptions(options)
 
   // 新一轮开始（打字或别的方式）就收起旧建议。
@@ -713,6 +737,10 @@ export const register: Register = (on, options) => {
       const pill = (key: string) => (
         <Text key={key} bold color={ACCENT} backgroundColor={ACCENT_BG}> Current </Text>
       )
+      // 别的电脑的会话：标题前一个灰色小标签（Win / Mac），和 Current 同款
+      const tag = (key: string, s: SessionRow) => (
+        <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${osLabel(s.os)} `}</Text>
+      )
       // 用量圆环；收起时那一行太挤，只留百分比，不写多久重置
       const usageMini = (withReset: boolean) =>
         five && (
@@ -773,6 +801,7 @@ export const register: Register = (on, options) => {
           >
             <Box flexDirection="row" alignItems="center" gap={1}>
               <Text color={HEX[s.status]}>●</Text>
+              {isRemote(s) && <Box flexShrink={0}>{tag(`m-tag-${s.id}`, s)}</Box>}
               <Box flexGrow={1} minWidth={0} overflow="hidden">
                 <Text wrap="truncate-end">{s.title}</Text>
               </Box>
@@ -838,6 +867,7 @@ export const register: Register = (on, options) => {
         return (
           <Box key="m-detail" flexDirection="column" paddingX={1} marginBottom={1} borderStyle="round" borderColor={BLUE_LINE}>
             <Box flexDirection="row" alignItems="center" gap={1}>
+              {isRemote(s) && <Box flexShrink={0}>{tag('m-tag-detail', s)}</Box>}
               <Box flexGrow={1} minWidth={0} overflow="hidden">
                 <Text bold wrap="truncate-end">{s.title}</Text>
               </Box>
@@ -916,7 +946,7 @@ export const register: Register = (on, options) => {
           {/* 最后一行：左边开关和 Details，右下角是收起按钮 */}
           <Box flexDirection="row" alignItems="center" justifyContent="space-between" gap={1} marginTop={1}>
             <Box flexDirection="row" flexWrap="wrap" columnGap={2} flexShrink={1} minWidth={0}>
-              <Button key="m-next" plain dimColor={!isOn} label={`Suggest next step: ${isOn ? 'On' : 'Off'}`} onPress={tap('toggle')} />
+              <Button key="m-next" plain dimColor={!isOn} label={`Next step: ${isOn ? 'On' : 'Off'}`} onPress={tap('toggle')} />
               <Button key="m-details" plain dimColor label={`Details${hiddenN > 0 ? ` · ${hiddenN} hidden` : ''}`} onPress={tap('details')} />
             </Box>
             <Box flexShrink={0}>
@@ -1002,6 +1032,10 @@ export const register: Register = (on, options) => {
     const pill = (key: string) => (
       <Text key={key} bold color={ACCENT} backgroundColor={ACCENT_BG}> Current </Text>
     )
+    // 别的电脑的会话：标题前一个灰色小标签（Win / Mac），和 Current 同款；这种卡只能看，不挂点击层
+    const tag = (key: string, s: SessionRow) => (
+      <Text key={key} bold dimColor backgroundColor={HOVER_BG.backgroundColor}>{` ${osLabel(s.os)} `}</Text>
+    )
 
     // 每张卡片两行（和 Details 窗一样）：
     //   第一行 = 状态点 + 标题（占满剩下的宽度，放不下才省略）+ 右侧状态文字（整段显示、不换行）+ 小图标按钮
@@ -1025,12 +1059,13 @@ export const register: Register = (on, options) => {
           borderDimColor={!isSelf && !isOpen}
           borderColor={isSelf ? ACCENT : isOpen ? BLUE_LINE : undefined}
           backgroundColor={isSelf ? ACCENT_TINT : undefined}
-          hover={isSelf ? undefined : HOVER}
+          hover={isSelf || isRemote(s) ? undefined : HOVER}
         >
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Box position="relative" flexDirection="row" alignItems="center" gap={1} flexGrow={1} minWidth={0}>
               <Text color={HEX[s.status]}>●</Text>
               <Box flexDirection="row" alignItems="center" gap={1} flexGrow={1} minWidth={0}>
+                {isRemote(s) && <Box flexShrink={0}>{tag(`tag-${s.id}`, s)}</Box>}
                 <Text wrap="truncate-end">{s.title}</Text>
                 {isSelf && (
                   <Box flexShrink={0}>
@@ -1046,7 +1081,7 @@ export const register: Register = (on, options) => {
                   <Text dimColor> · {fmt(billed(s))}</Text>
                 </Text>
               </Box>
-              {!isSelf && hit(`go-${s.id}`, `go:${s.id}`)}
+              {!isSelf && !isRemote(s) && hit(`go-${s.id}`, `go:${s.id}`)}
             </Box>
             {kind === 'live' ? (
               <Box key={`xb-${s.id}`} position="relative" flexShrink={0} hover={HOVER_BG}>
@@ -1063,7 +1098,7 @@ export const register: Register = (on, options) => {
           {/* 纵向排列的 Box 会把里面的 Svg 图片拉满整宽（横向排列时图片只有默认宽度） */}
           <Box position="relative" flexDirection="column">
             <Svg source={lineSvg(st.frac, st.color)} alt={`${s.title}: ${st.text}`} height={6} />
-            {!isSelf && hit(`go2-${s.id}`, `go:${s.id}`)}
+            {!isSelf && !isRemote(s) && hit(`go2-${s.id}`, `go:${s.id}`)}
           </Box>
         </Box>
       )
@@ -1138,6 +1173,7 @@ export const register: Register = (on, options) => {
       return (
         <Box key="detail" flexDirection="column" paddingX={1} marginBottom={1} borderStyle="round" borderColor={BLUE_LINE}>
           <Box flexDirection="row" alignItems="center" gap={1}>
+            {isRemote(s) && <Box key="tag-detail" flexShrink={0}>{tag('tag-detail-text', s)}</Box>}
             <Box flexShrink={1} minWidth={0} overflow="hidden">
               <Text bold wrap="truncate-end">{s.title}</Text>
             </Box>
@@ -1223,8 +1259,8 @@ export const register: Register = (on, options) => {
 
     // 扁平胶囊开关：文字 + On/Off + 小滑块，整块可点（透明点击层盖在上面）
     const toggle = (
-      <Box key="next-switch" position="relative" flexDirection="row" alignItems="center" gap={1} paddingX={1} paddingY={0.5} borderStyle="round" borderDimColor>
-        <Text bold>Suggest next step</Text>
+      <Box key="next-switch" position="relative" flexDirection="row" alignItems="center" gap={1} paddingX={1} paddingY={0.5} borderStyle="round" borderDimColor flexShrink={0}>
+        <Text bold wrap="truncate-end">Next step</Text>
         <Text color={isOn ? ACCENT : undefined} dimColor={!isOn}>{isOn ? "On" : "Off"}</Text>
         <Svg source={switchSvg(isOn)} alt={isOn ? 'Suggest next step is on' : 'Suggest next step is off'} width={30} height={18} />
         {hit('next-toggle', 'toggle')}
@@ -1264,24 +1300,31 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         {openRow && panel(openRow)}
-        {/* 两栏的标题放同一行（右边有开关、更高，左边跟着撑到一样高、文字居中），卡片另起一行，左右第一张卡顶部对齐 */}
+        {/* 两栏的标题放同一行（右边有开关、更高，左边跟着撑到一样高、文字居中），卡片另起一行，左右第一张卡顶部对齐。
+            窗口窄时（Mac 的输入框比 Windows 窄一些）开关、Details、用量圆环不压缩、不换行，标题文字被挤时截断 */}
         <Box flexDirection="row" gap={3}>
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} width="50%">
-            <Text wrap="truncate-end">
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} width="50%" minWidth={0}>
+            {/* 标题和后面的说明是两个同级 Text（嵌在一个 Text 里时内层照样换行）：说明那段单独放在可截断的盒子里 */}
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} overflow="hidden">
               <Text bold>Running</Text>
-              <Text dimColor> {live.length} · {fmt(tokens)} tok</Text>
-            </Text>
+              <Box flexShrink={1} minWidth={0} overflow="hidden">
+                <Text dimColor wrap="truncate-end">{live.length} · {fmt(tokens)} tok</Text>
+              </Box>
+            </Box>
             {ring}
           </Box>
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center" width="50%">
-            <Text>
+          <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} width="50%" minWidth={0}>
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} overflow="hidden">
               <Text bold>Done</Text>
-              <Text dimColor> {finished.length} · cache left</Text>
-            </Text>
-            <Box flexDirection="row" alignItems="center" gap={1}>
+              <Box flexShrink={1} minWidth={0} overflow="hidden">
+                <Text dimColor wrap="truncate-end">{finished.length} · cache left</Text>
+              </Box>
+            </Box>
+            {/* 开关不压缩；Details 可以让位（被挤时截断），把宽度留给 cache left */}
+            <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0}>
               {toggle}
-              <Box key="details-link" position="relative" paddingX={1} hover={HOVER_BG}>
-                <Text dimColor>{details.label}{hiddenN > 0 ? ` · ${hiddenN} hidden` : ''}</Text>
+              <Box key="details-link" position="relative" paddingX={1} hover={HOVER_BG} flexShrink={1} minWidth={0} overflow="hidden">
+                <Text dimColor wrap="truncate-end">{details.label}{hiddenN > 0 ? ` · ${hiddenN} hidden` : ''}</Text>
                 {hit('hit-details', 'details')}
               </Box>
             </Box>
@@ -1346,6 +1389,7 @@ export const register: Register = (on, options) => {
       const left = showsCache(s) ? cacheLeft(s) : null
       return [
         s.id === self ? 'this session' : '',
+        s.device !== undefined ? `on ${s.device}` : '',
         hiddenOn(s) ? 'hidden from board' : '',
         s.project,
         s.current ? `▸ ${s.current}` : '',
@@ -1374,7 +1418,7 @@ export const register: Register = (on, options) => {
             <Text bold>{summary}</Text>
             <Box flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
               <Box key="pane-switch" position="relative" flexDirection="row" alignItems="center" gap={1} paddingX={1} borderStyle="round" borderDimColor>
-                <Text bold>Suggest next step</Text>
+                <Text bold>Next step</Text>
                 <Text color={isOn ? ACCENT : undefined} dimColor={!isOn}>{isOn ? 'On' : 'Off'}</Text>
                 <Svg source={switchSvg(isOn)} alt={isOn ? 'Suggest next step is on' : 'Suggest next step is off'} width={30} height={18} />
                 {hit('pane-next-toggle', 'toggle')}
@@ -1389,7 +1433,7 @@ export const register: Register = (on, options) => {
           {notice !== '' && <Text color={b.error ? 'red' : undefined} dimColor={!b.error}>{notice}</Text>}
           {list.map(s => {
             const isSelf = s.id === self
-            const canGo = s.link !== '' && !isSelf
+            const canGo = s.link !== '' && !isSelf && !isRemote(s)
             const hid = hiddenOn(s)
 
             const frac = s.status === 'input' ? 1 : s.total > 0 ? s.done / s.total : s.status === 'done' || s.status === 'waiting' ? 1 : 0
@@ -1408,6 +1452,11 @@ export const register: Register = (on, options) => {
               >
                 <Box flexDirection="row" alignItems="center" gap={1}>
                   <Box position="relative" flexDirection="row" alignItems="center" gap={1} flexGrow={1}>
+                    {isRemote(s) && (
+                      <Box flexShrink={0} paddingX={1} backgroundColor={HOVER_BG.backgroundColor}>
+                        <Text bold dimColor>{osLabel(s.os)}</Text>
+                      </Box>
+                    )}
                     <Box flexShrink={1}>
                       <Text bold dimColor={hid} wrap="truncate-end">{s.title}</Text>
                     </Box>
@@ -1476,7 +1525,7 @@ export const register: Register = (on, options) => {
                 <Text>{right(s)}</Text>
                 <Text dimColor>{fmt(billed(s))} tok</Text>
               </Box>
-              {s.link !== '' && s.id !== self && (
+              {s.link !== '' && s.id !== self && !isRemote(s) && (
                 <Button key={`pane-go-${s.id}`} label="↗" plain dimColor onPress={() => void jump($, s.link, s.title)} />
               )}
               {hiddenOn(s) && (
@@ -1505,7 +1554,7 @@ export const register: Register = (on, options) => {
         {list.map(s => (
           <Box flexDirection="column" marginTop={1}>
             <Box flexDirection="row">
-              <Text bold>{fit(s.title, titleCols)} </Text>
+              <Text bold>{fit(isRemote(s) ? `${osLabel(s.os)} · ${s.title}` : s.title, titleCols)} </Text>
               <Text color={COLOR[s.status]}>{bar(s, barCols)}</Text>
               <Text> {fit(right(s), 14)}</Text>
               <Text>{fmt(billed(s)).padStart(8)}</Text>

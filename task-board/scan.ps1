@@ -1,5 +1,7 @@
-param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000)
+param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
 # 增量扫描 ~/.claude/projects 下各会话的 transcript，每轮输出一行 JSON。
+#   -Shared DIR  跨设备共享目录（同步盘里）：每 10 秒把本机快照写成 DIR\<Device>.json，每轮读目录里其他电脑的快照附在 remote 里
+#   -Device NAME 本机在共享目录里的名字（空 = 主机名）
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Join-Path $env:USERPROFILE '.claude\projects'
 # 全局开关（所有会话共用）：任务板上按一下就改这个文件，各会话的扫描进程每轮都重读
@@ -12,6 +14,16 @@ New-Item -ItemType Directory -Force $inputDir | Out-Null
 # 最近一轮的输出（所有会话共用）：新开的会话先显示它，不用等自己的扫描进程读完所有 transcript
 $snapPath = Join-Path $env:USERPROFILE '.claude\task-board-snapshot.json'
 $lastSnap = [datetime]::MinValue
+# 跨设备共享：本机的名字和系统（卡片上的小标签写 Win / Mac）；共享目录开头的 ~ = 用户主目录
+$os = 'win'
+if (-not $Device) { $Device = $env:COMPUTERNAME }
+if ($Shared -match '^~([\\/]|$)') { $Shared = Join-Path $env:USERPROFILE $Shared.Substring(2) }
+if ($Shared) {
+  New-Item -ItemType Directory -Force $Shared | Out-Null
+  if (-not (Test-Path -LiteralPath $Shared -PathType Container)) { $Shared = '' }   # 建不出来（同步盘没装）就当没开
+}
+# 共享目录里的快照超过这么久没更新 = 那台电脑离线，不显示（和插件里的 SNAP_MAX_SEC 一致）
+$SHARED_MAX_MS = 10 * 60 * 1000
 $files = @{}   # path -> 增量状态
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $rxId = [regex]'"id":"(msg_[^"]+)"'
@@ -325,23 +337,55 @@ do {
   }
   $usageText = ''
   if (Test-Path $usagePath) { try { $usageText = [System.IO.File]::ReadAllText($usagePath, $utf8) } catch { } }
+  $nowMs = [int64](($now.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds)
   $json = ConvertTo-Json -InputObject @{
-    at = [int64](($now.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds); sessions = @($out)
+    at = $nowMs; device = $Device; os = $os; sessions = @($out)
     prefs = @{ nextSteps = $nextSteps; hidden = $hidden }; prefsPath = $prefsPath
     usagePath = $usagePath; usageText = $usageText; inputDir = $inputDir
   } -Compress -Depth 6
   # Windows PowerShell 的标准输出走系统代码页，中文会乱码：非 ASCII 一律转成 \uXXXX
   $json = [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+  # 先写临时文件再整个换上，读的一方不会读到半个文件（几个会话同时写，谁后换上算谁的）
+  $swap = {
+    param([string]$text, [string]$dest)
+    $tmp = "$dest.$PID.tmp"
+    try {
+      [System.IO.File]::WriteAllText($tmp, $text, $utf8)
+      # 第三个参数（备份路径）要用 [NullString]::Value：PowerShell 把 $null 传成空字符串，Replace 会报“路径格式不对”，快照就一直不更新
+      if ([System.IO.File]::Exists($dest)) { [System.IO.File]::Replace($tmp, $dest, [NullString]::Value) } else { [System.IO.File]::Move($tmp, $dest) }
+    } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+  }
+  $writeSnap = ($now - $lastSnap).TotalSeconds -ge 10
+  # 跨设备共享：本机快照（不含 remote，不然两边会互相套进去越滚越大）写到共享目录；再读其他电脑的快照
+  if ($Shared) {
+    if ($writeSnap) { & $swap $json (Join-Path $Shared "$Device.json") }
+    $remote = @()
+    foreach ($rf in Get-ChildItem -LiteralPath $Shared -Filter '*.json' -File) {
+      if ($rf.Name -like '*.tmp' -or $rf.Name -eq "$Device.json") { continue }
+      try {
+        $text = [System.IO.File]::ReadAllText($rf.FullName, $utf8).Trim()
+        $head = $text | ConvertFrom-Json
+        # 要有本机名和时间；本机名和自己一样的（同步盘的冲突副本）不要；太久没更新的 = 离线，跳过
+        if (-not $head -or -not ($head.device -is [string]) -or -not $head.device -or $head.device -eq $Device) { continue }
+        $at = $head.at -as [int64]
+        if (-not $at -or ($nowMs - $at) -gt $SHARED_MAX_MS) { continue }
+        if (-not $text.StartsWith('{') -or -not $text.EndsWith('}')) { continue }
+        # 原样附上（不重新序列化，深度和中文转义都保持原样）；共享目录里的快照本来就不含 remote
+        $remote += $text
+      } catch { }
+    }
+    if ($remote.Count -gt 0) {
+      $json = $json.Substring(0, $json.Length - 1) + ',"remote":[' + ($remote -join ',') + ']}'
+      # 别的电脑的快照本该是纯 ASCII 的；不是的话（别的工具写的）这里再转一次，不然标准输出会变问号
+      $json = [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+    }
+  }
   [Console]::Out.WriteLine($json)
   [Console]::Out.Flush()
-  # 快照最多 10 秒写一次；先写临时文件再整个换上，读的一方不会读到半个文件（几个会话同时写，谁后换上算谁的）
-  if (($now - $lastSnap).TotalSeconds -ge 10) {
+  # 本机的共用快照最多 10 秒写一次（带 remote：新会话一启动就能看到别的电脑）
+  if ($writeSnap) {
     $lastSnap = $now
-    $tmp = "$snapPath.$PID.tmp"
-    try {
-      [System.IO.File]::WriteAllText($tmp, $json, $utf8)
-      if ([System.IO.File]::Exists($snapPath)) { [System.IO.File]::Replace($tmp, $snapPath, $null) } else { [System.IO.File]::Move($tmp, $snapPath) }
-    } catch { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    & $swap $json $snapPath
   }
   if (-not $Once) { Start-Sleep -Milliseconds $IntervalMs }
 } while (-not $Once)

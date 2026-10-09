@@ -178,6 +178,32 @@ export function rebaseScan(got: unknown, now: number, maxSec: number): ScanLine 
   return { ...g, at: g.at + d * 1000, sessions }
 }
 
+/**
+ * 别的电脑的快照并入本机的会话。扫描进程把共享目录里其他设备的快照原样附在 remote 里；
+ * 这里按本机这一轮的 at 把远端的秒数往后推（rebaseScan），超过 maxSec 的设备当离线跳过，
+ * 每个远端会话打上 device / os。本机的会话优先；同一 id 出现在几份远端快照里（同步盘的冲突副本）取 at 最新的。
+ */
+export function mergeRemote(got: ScanLine, maxSec: number): SessionRow[] {
+  const own = got.sessions ?? []
+  const ids = new Set(own.map(s => s.id))
+  const picked = new Map<string, { at: number; s: SessionRow }>()
+  for (const r of got.remote ?? []) {
+    if (!r || typeof r.device !== 'string' || r.device === '') continue
+    const rb = rebaseScan(r, got.at, maxSec)
+    if (!rb) continue
+    for (const s of rb.sessions) {
+      if (ids.has(s.id)) continue
+      const prev = picked.get(s.id)
+      if (prev && prev.at >= r.at) continue
+      picked.set(s.id, { at: r.at, s: { ...s, device: r.device, os: r.os } })
+    }
+  }
+  return [...own, ...[...picked.values()].map(x => x.s)]
+}
+
+/** 设备标签：win → Win、mac → Mac；别的原样。 */
+export const osLabel = (os: string | undefined) => (os === 'win' ? 'Win' : os === 'mac' ? 'Mac' : (os ?? ''))
+
 // ── 小图标（22×22，细线；颜色写死，因为 Svg 不跟随主题文字色）──────────────
 
 const MUTED = '#8a877f'
