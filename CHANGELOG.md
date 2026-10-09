@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.1
+- Fixed: on Windows the shared-folder snapshot was written as a temporary file and then swapped in (File.Replace). iCloud Drive for Windows uploads the temporary file, treats every swap as a conflict (`Win 2.json`, `Win 3.json`, …) and eventually locks the temporary file so nothing more gets written. The shared copy is now written in place; readers already skip a half-written file and retry on the next round. The scanner also deletes the conflict copies and temporary files the drive left for its own label. The local snapshot under `~/.claude` is unchanged.
+- `scan.ps1` now starts with a UTF-8 BOM so Windows PowerShell reads it as UTF-8 regardless of the system code page.
+
 ## 2.2.0
 - **Open sessions from your other computers.** Clicking a card from another computer opens that session through Remote Control (`claude://claude.ai/code/session_…`); the desktop app opens it as a Remote Control session. It needs Remote Control on for that session on its own computer (desktop app setting **Connect new sessions to Remote Control**). Cards from a computer still on 2.1.x carry no Remote Control id and stay read-only. Same in the Details pane.
 - The scanner (`scan.ps1`) reads each session's Remote Control id (the last entry of `bridgeSessionIds` in the desktop app's session list) and writes it as `bridge`, so the snapshot in the shared folder carries it.

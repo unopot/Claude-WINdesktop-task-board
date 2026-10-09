@@ -68,7 +68,7 @@ Do this on **every** computer that should take part.
 - Two computers with the same label show up as one. Change one label.
 - The drive must actually download the files (no "online-only" placeholders).
 - Clicking a card from another computer opens a session that does not connect: Remote Control is off for that session on its own computer, or the session was closed there. Turn on **Connect new sessions to Remote Control** in that computer's desktop app settings; it applies to sessions started after that.
-- Sync-conflict copies such as `Office 2.json` or `Office (1).json` are harmless: the newest copy of a session wins and the rest is ignored. Delete them when they pile up.
+- Sync-conflict copies such as `Office 2.json` or `Office (1).json` are harmless: the newest copy of a session wins and the rest is ignored, and each computer deletes the copies the drive made of its own file.
 - To turn sharing off on a computer, clear its Shared folder setting.
 
 ### What is shared

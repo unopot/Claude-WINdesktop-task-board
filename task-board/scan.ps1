@@ -1,4 +1,4 @@
-param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
+﻿param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
 # 增量扫描 ~/.claude/projects 下各会话的 transcript，每轮输出一行 JSON。
 #   -Shared DIR  跨设备共享目录（同步盘里）：每 10 秒把本机快照写成 DIR\<Device>.json，每轮读目录里其他电脑的快照附在 remote 里
 #   -Device NAME 本机标签（卡片上的灰色小标签，也是共享目录里的文件名；空 = Win）
@@ -368,10 +368,16 @@ do {
   $writeSnap = ($now - $lastSnap).TotalSeconds -ge 10
   # 跨设备共享：本机快照（不含 remote，不然两边会互相套进去越滚越大）写到共享目录；再读其他电脑的快照
   if ($Shared) {
-    if ($writeSnap) { & $swap $json (Join-Path $Shared "$Device.json") }
+    # 同步盘里不用“临时文件 + 换上”：iCloud 会抢先上传 .tmp、把每次换文件当成冲突（Win 2.json、Win 3.json…），
+    # 还会锁住 .tmp 让之后每一轮都写不进去。直接原地覆盖写，写不进去（文件正被同步）就跳过这一轮；读的一方读到半个文件会当坏文件跳过
+    if ($writeSnap) { try { [System.IO.File]::WriteAllText((Join-Path $Shared "$Device.json"), $json, $utf8) } catch { } }
     $remote = @()
-    foreach ($rf in Get-ChildItem -LiteralPath $Shared -Filter '*.json' -File) {
-      if ($rf.Name -like '*.tmp' -or $rf.Name -eq "$Device.json") { continue }
+    foreach ($rf in Get-ChildItem -LiteralPath $Shared -File) {
+      # 同步盘给本机文件生成的冲突副本（Win 2.json、Win(1).json）和残留的临时文件：是本机自己的东西，删掉
+      if ($rf.Name -match ('^' + [regex]::Escape($Device) + '( \d+|\(\d+\))\.json$') -or $rf.Name -like "$Device.json.*.tmp") {
+        Remove-Item -LiteralPath $rf.FullName -Force -ErrorAction SilentlyContinue; continue
+      }
+      if ($rf.Extension -ne '.json' -or $rf.Name -eq "$Device.json") { continue }
       try {
         $text = [System.IO.File]::ReadAllText($rf.FullName, $utf8).Trim()
         $head = $text | ConvertFrom-Json
