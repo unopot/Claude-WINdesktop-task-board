@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0
+- **Title bar counter.** A small coloured count in the Claude desktop app's title bar (yellow needs input, blue running, green done) that is there even when no session is open, or while a Remote Control session from another computer is open. Click it for the sessions, click one to switch to it. A plain C# file (`counter.cs`) compiled by Windows PowerShell at start (`counter.ps1`), started detached and one at a time when a session opens; it sticks to the Claude window and follows it as it moves. New setting **Title bar counter** (on by default) turns it off. Same idea as the Mac version's menu bar counter (same setting key, `menuBar`).
+- `tests/menubar.test.tsx` covers starting it from a desktop session, leaving out an empty shared folder, stopping it when the setting is off, and leaving it alone in sessions with no window.
+
 ## 2.2.1
 - Fixed: on Windows the shared-folder snapshot was written as a temporary file and then swapped in (File.Replace). iCloud Drive for Windows uploads the temporary file, treats every swap as a conflict (`Win 2.json`, `Win 3.json`, …) and eventually locks the temporary file so nothing more gets written. The shared copy is now written in place; readers already skip a half-written file and retry on the next round. The scanner also deletes the conflict copies and temporary files the drive left for its own label. The local snapshot under `~/.claude` is unchanged.
 - `scan.ps1` now starts with a UTF-8 BOM so Windows PowerShell reads it as UTF-8 regardless of the system code page.

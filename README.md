@@ -29,6 +29,18 @@ Interactions:
 - The eye icon on a finished card hides it; it comes back by itself when that session gets a new request. **Details** (or `/task-board`) opens a pane listing every recent session, hidden ones included, with **Unhide**.
 - **Next step** (on until you switch it off; one switch for all sessions): after each answer, fork the session once to propose three next prompts; clicking one fills the prompt box and never sends it. It costs one extra request per turn, so switch it off on the board if you do not want that.
 
+## Title bar counter
+
+The board lives above the prompt of a session, so you only see it while a session on this computer is open. The title bar counter is always there: on the new-session page, while you read an old session, or while a Remote Control session from another computer is open.
+
+- A small coloured count in the Claude desktop app's title bar, just left of the icons at the top right: **yellow** = needs input, **blue** = running or waiting, **green** = done (the same sessions the board lists: finished within the last hour with the cache still warm, hidden ones left out). A grey dot when there is nothing.
+- Click it for the list: one row per session with a coloured dot, title, state, project and time; sessions from another computer carry its label. Click a row to switch to that session (one from another computer opens through Remote Control, as on the board).
+- It is a tiny window of its own that sticks to the Claude window: it moves with it, and hides when the window is minimized, on another virtual desktop, or narrower than about 760 px.
+- It starts by itself when a session opens and keeps running after the session closes; only one runs at a time. It has no Exit item: switch **Title bar counter** off in the settings to stop it.
+- It is a plain C# file (`counter.cs`) that Windows PowerShell compiles when it starts (`counter.ps1`), with its own copy of the scanner, so nothing to build or install.
+
+The app's own title bar icons differ a little between sessions; the counter keeps a fixed distance from the right edge (`RIGHT_GAP` in `counter.cs`), so on some sessions it sits a little further from them.
+
 ## See sessions from your other computers
 
 The board can also show the Claude Code sessions running on your other computers (any mix of Windows PCs and Macs), each card tagged with a short label such as **Win**, **Mac**, **Office** or **Laptop**.
@@ -136,12 +148,14 @@ Run `/plugin configure task-board@unopot-mods` in Claude Code:
 | Let suggestions use skills and slash commands | on | a suggestion may be `/skill-name` |
 | Shared folder for other computers | `~/iCloudDrive/Claude Code/task-board-shared` | a folder in a synced drive, same on every computer (see above); empty = this computer only |
 | This computer's label | Win | the grey tag shown on this computer's cards elsewhere, and its file name in the shared folder; unique per computer |
+| Title bar counter | on | the coloured counter in the desktop app's title bar (see above); off stops it |
 
 ## How it works and what it touches
 
 - Each session starts one small PowerShell process that reads the transcripts under `~/.claude/projects` incrementally every 3 seconds, plus the desktop app's session list for titles, links and Remote Control ids. Nothing leaves your machine; the plugin makes no network requests of its own.
 - A session marks itself as *needs input* when it raises a permission dialog, `AskUserQuestion` or an MCP form, and clears the mark when the call finishes or the turn ends.
 - It writes four small things under `~/.claude`: `task-board-prefs.json` (switch and hidden sessions), `task-board-usage.json` (latest usage reading, shared between sessions), `task-board-snapshot.json` (the latest scan, so a new session shows the board at once) and the folder `task-board-input/` (the needs-input marks). With sharing on it also writes `<label>.json` into the shared folder. Delete them after uninstalling if you like.
+- The title bar counter is started by `counter.ps1` (with `Start-Process`, so it is not a child of the session; one at a time, pid in `~/.claude/task-board-counter.pid`). It runs its own `scan.ps1` inside a job object, so the scanner goes away with it even when it is killed. It follows the Claude window through the system's window-location events. When its plugin version is removed (after an update) it quits, and the next session starts the new one.
 - Clicking a card opens a `claude://` link, which brings the desktop app to that session: `claude://claude.ai/epitaxy/local_…` for a session on this computer, `claude://claude.ai/code/session_…` (Remote Control) for one on another computer.
 
 ## Known limitations
@@ -160,6 +174,8 @@ claude plugin uninstall task-board@unopot-mods
 ```bash
 claude plugin marketplace remove unopot-mods
 ```
+
+Uninstalling leaves a running title bar counter until it notices its files are gone (a few seconds).
 
 ## Development
 
