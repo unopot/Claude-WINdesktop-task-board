@@ -97,9 +97,11 @@ test('任务板：本会话有 Current 标记，展开明细，隐藏已完成�
   const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
   // 本会话（b）有 Current 标签，别的没有
   expect(await ui.find({ type: 'Text', text: /^ Current $/ })).toBeDefined()
-  // 已隐藏的 e 不在任务板上，Details 旁边显示数量
+  // 已隐藏的 e 不在任务板上；Details 在横条上只画三个点（Mac 的窗口窄）
   expect(await ui.find({ key: 'row-e' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: /Details · 1 hidden/ })).toBeDefined()
+  expect(await ui.find({ key: 'details-link' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^⋯$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Details/ })).toBeUndefined()
   // Running 行显示总耗时
   expect(await ui.find({ type: 'Text', text: /⏱ 12:04/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^33%$/ })).toBeDefined()
@@ -456,7 +458,7 @@ test('新会话：一启动就用共用快照填上任务板，不等扫描进�
   mock.env(on, { USERPROFILE: 'C:\\Users\\u' })
   on('fs.read', async (_$, e) => {
     reads.push(e.path)
-    return { value: JSON.stringify({ at, sessions: [row('a', '别的会话', 'done', 30)], prefsPath: 'C:/p.json' }) }
+    return { value: JSON.stringify({ at, sessions: [row('a', '别的会话', 'done', 30)], prefsPath: 'C:/x/prefs.json' }) }
   })
   const clock = mock.clock(on, { now: at + 5_000 })
   on('session.surfaces', async () => ({ value: [] }))
@@ -482,6 +484,46 @@ test('收起箭头：灰色细线、不填底色；展开时向下、收起时�
   expect(foldSvg(true)).toMatch(/M7.5 12.75 11 9.25/)
   expect(foldSvg(false)).not.toMatch(/<rect/)
   expect(foldSvg(true)).toMatch(/fill="none" stroke="#8a877f"/)
+})
+
+test('桌面：按住卡片下沉（上边距 +0.4、下边距 -0.4），松开复原并跳转；松开在卡片外则取消', async ($, on) => {
+  const at = Date.now()
+  const board = { at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json', sessions: [row('b', '本会话', 'running', 5), row('c', '别的会话', 'done', 600)] }
+  on('ui.render', async ($$, e) => {
+    const { Box } = $$.ui.resolve(e)
+    return <Box />
+  })
+  on('state.get', async (_$, e, next) => {
+    if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
+    if (e.plugin === 'task-board' && e.key === 'me') return { value: { value: 'b', version: 1 } }
+    return next(e)
+  })
+  on('ui.log', async () => ({ value: undefined }))
+  const toasts: string[] = []
+  on('ui.toast', async (_$, e) => {
+    toasts.push(e.text)
+    return { value: undefined }
+  })
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
+  const card = async () => (await ui.find({ key: 'row-c' })) as { props: { marginTop?: number; marginBottom?: number } } | undefined
+  expect((await card())?.props.marginTop).toBe(1)
+  // 按下：下沉
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-c' })
+  expect((await card())?.props.marginTop).toBe(1.4)
+  expect((await card())?.props.marginBottom).toBe(-0.4)
+  expect(toasts.length).toBe(0)
+  // 在卡片外松开：复原，不跳转
+  await ui.pointer({ type: 'up', x: -5, y: 0, button: 'left', in: 'go-c' })
+  expect((await card())?.props.marginTop).toBe(1)
+  expect(toasts.length).toBe(0)
+  // 按下再在卡片内松开：复原并跳转
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-c' })
+  await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'go-c' })
+  expect((await card())?.props.marginTop).toBe(1)
+  expect(toasts.some(t => t.includes('Switching to "别的会话"'))).toBe(true)
+  // 本会话的卡不可点，也不下沉
+  expect(await ui.find({ key: 'go-b' })).toBeUndefined()
 })
 
 test('跨设备：别的电脑的快照并入会话，秒数按本机时间推后；离线的设备、没名字的跳过；同一会话取最新的一份', async () => {
@@ -543,6 +585,7 @@ test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）�
   // 有 Remote Control 编号的远端卡可点：打开 claude://claude.ai/code/<编号>，不用那台电脑自己的 local_ 链接
   expect(await ui.find({ key: 'go-m' })).toBeDefined()
   expect(await ui.find({ key: 'go2-m' })).toBeDefined()
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-m' })
   await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'go-m' })
   expect(runs).toEqual([['rundll32.exe', 'url.dll,FileProtocolHandler', 'claude://claude.ai/code/session_01Test']])
   expect(toasts.some(t => t.includes('Opening "Mac 上的会话" from MacBook via Remote Control'))).toBe(true)
@@ -584,4 +627,63 @@ test('Details 窗：别的电脑的会话有那台电脑的标签；有 Remote C
   expect(await ui.find({ key: 'pane-go-r' })).toBeDefined()
   expect(await ui.find({ key: 'pane-go2-r' })).toBeDefined()
   await ui.unmount()
+})
+
+test('iPhone Live 开关：本机装了推送器（扫描进程给出 livePusher）才画；点一下写开关文件的 liveActivity，保留别的字段；横条上不写 On / Off', async ($, on) => {
+  const at = Date.now()
+  const prefsPath = 'C:/x/prefs.json'
+  let board: Record<string, unknown> = { at, tick: 1, prefs: { nextSteps: false }, prefsPath, sessions: [row('b', '本会话', 'running', 5)] }
+  on('state.get', async (_$, e, next) => {
+    if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
+    if (e.plugin === 'task-board' && e.key === 'me') return { value: { value: 'b', version: 1 } }
+    return next(e)
+  })
+  on('ui.log', async () => ({ value: undefined }))
+  on('ui.toast', async () => ({ value: undefined }))
+  on('fs.read', async () => ({ value: '{"nextSteps":false,"hidden":{"e":1}}' }))
+  const writes: { path: string; text: string }[] = []
+  on('fs.write', async (_$, e) => {
+    const w = e as { path?: unknown; text?: unknown }
+    writes.push({ path: String(w.path ?? ''), text: String(w.text ?? '') })
+    return { value: undefined }
+  })
+
+  // 没装推送器：横条上没有这个开关
+  const off = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
+  expect(await off.find({ key: 'next-switch' })).toBeDefined()
+  expect(await off.find({ key: 'phone-switch' })).toBeUndefined()
+  await off.unmount()
+
+  // 装了：和 Next step 并排，只有名字和滑块；点一下（开着）写 liveActivity:false，别的字段留着
+  board = { ...board, livePusher: true }
+  const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'phone-switch' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^iPhone Live$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^(On|Off)$/ })).toBeUndefined()
+  await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'phone-toggle' })
+  expect(writes.length).toBe(1)
+  expect(writes[0]?.path.replace(/\\/g, '/')).toBe(prefsPath)
+  const w = JSON.parse(writes[0]?.text ?? '{}') as { liveActivity?: boolean; nextSteps?: boolean; hidden?: Record<string, number> }
+  expect(w.liveActivity).toBe(false)
+  expect(w.nextSteps).toBe(false)
+  expect(w.hidden).toEqual({ e: 1 })
+  await ui.unmount()
+
+  // 手机：按钮；关着时点一下 = 打开
+  board = { ...board, prefs: { nextSteps: false, liveActivity: false } }
+  const phone = await $.ui.mount({ plugin: 'task-board', surface: 'mobile', ...BAND, props: { ...BAND.props, bodyColumns: 44 } })
+  await phone.press({ key: 'm-fold' })
+  expect(await phone.find({ key: 'm-phone' })).toBeDefined()
+  await phone.press({ key: 'm-phone' })
+  expect(writes.length).toBe(2)
+  expect(JSON.parse(writes[1]?.text ?? '{}').liveActivity).toBe(true)
+  await phone.unmount()
+
+  // Details 窗（桌面）也有
+  const pane = await $.ui.mount({
+    plugin: 'task-board', surface: 'desktop', component: 'Pane', requestId: 'task-board',
+    props: { title: 'Sessions', isFocused: false, bodyColumns: 60, placement: 'dock', scroll: { offset: 0, bodyRows: 30 }, view: {} },
+  })
+  expect(await pane.find({ key: 'pane-phone' })).toBeDefined()
+  await pane.unmount()
 })

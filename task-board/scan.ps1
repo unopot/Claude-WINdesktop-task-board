@@ -8,6 +8,8 @@ $root = Join-Path $env:USERPROFILE '.claude\projects'
 $prefsPath = Join-Path $env:USERPROFILE '.claude\task-board-prefs.json'
 # 账号用量（5 小时 / 每周额度）：哪个会话拿到新读数就写这里，扫描进程原样转给所有会话
 $usagePath = Join-Path $env:USERPROFILE '.claude\task-board-usage.json'
+# iPhone Live 推送器的配置：本机有它，任务板上才画「iPhone Live」开关（开关存在 prefs 的 liveActivity，推送器读同一个文件）
+$livePath = Join-Path $env:USERPROFILE '.claude\task-board-live.json'
 # “在等我决定”的标记：每个会话一个文件（文件名 = 会话 id，内容 = 标记时间毫秒，空 = 没在等）
 $inputDir = Join-Path $env:USERPROFILE '.claude\task-board-input'
 New-Item -ItemType Directory -Force $inputDir | Out-Null
@@ -214,6 +216,8 @@ do {
     $st = Get-St $f.FullName
     $id = $f.BaseName
     $mtime = $f.LastWriteTime
+    # 最后一条带时间的消息（主会话和子代理里最新的）：App 往 transcript 末尾补写的后台信息没有时间，不算
+    $msgT = $st.lastTs
     # 子代理 transcript：<session>\subagents\*.jsonl
     $sub = @{ tin = 0L; tcw = 0L; tcr = 0L; tout = 0L; n = 0; active = 0 }
     $subRows = @()
@@ -228,6 +232,7 @@ do {
         $isActive = (($now - $sf.LastWriteTime).TotalSeconds -lt 60 -and $ss.stop -ne 'end_turn' -and $ss.tool -ne 'SubagentHandback')
         if ($isActive) { $sub.active++ }
         if ($sf.LastWriteTime -gt $mtime) { $mtime = $sf.LastWriteTime }
+        if ($ss.lastTs -and (-not $msgT -or $ss.lastTs -gt $msgT)) { $msgT = $ss.lastTs }
         # 子代理明细行：正在跑的，和这一轮里跑完的（名字、类型来自旁边的 .meta.json）
         if ($isActive -or ($st.turnAt -and $ss.lastTs -and $ss.lastTs -ge $st.turnAt)) {
           # .meta.json 可能比 transcript 晚一点写出来：没读到就下一轮再读
@@ -252,13 +257,14 @@ do {
     # 正在跑的在前，各自按开始时间；最多 30 行（at 先留着，下面要用它找是哪一步派出去的）
     $subRows = @($subRows | Sort-Object @{ e = { -not $_.active } }, @{ e = { $_.at } } | Select-Object -First 30)
     $age = ($now - $mtime).TotalSeconds
+    $msgAge = if ($msgT) { ($now.ToUniversalTime() - $msgT).TotalSeconds } else { $age }
     # 主会话的缓存只被主 transcript 里的请求续期（子代理用自己的缓存前缀）
     $cacheAge = if ($st.lastReq) { [int]($now.ToUniversalTime() - $st.lastReq).TotalSeconds } else { -1 }
 
     # 状态：根据最后一条消息和文件多久没动
     if ($sub.active -gt 0) { $status = 'running' }
     elseif ($st.kind -eq 'assistant' -and $st.stop -eq 'end_turn') { $status = 'done' }
-    elseif ($age -lt 90) { $status = 'running' }
+    elseif ($age -lt 90 -and $msgAge -lt 90) { $status = 'running' }
     elseif ($st.kind -eq 'assistant' -and $st.stop -eq 'tool_use') { $status = 'waiting' }
     else { $status = 'idle' }
     # 会话自己报的“在等我决定”（授权框、提问、MCP 表单）比上面的猜测准：标记之后 transcript 没有新内容就算数
@@ -330,7 +336,7 @@ do {
     $bridge = if ($d -and $d.bridge) { $d.bridge } else { '' }
     [ordered]@{
       id = $id; title = $title; link = $link; bridge = $bridge; project = (Split-Path $st.cwd -Leaf); status = $status
-      ageSec = [int]$age; cacheAgeSec = $cacheAge; done = $done; total = $total; current = $current
+      ageSec = [int]$age; msgAgeSec = [int]$msgAge; cacheAgeSec = $cacheAge; done = $done; total = $total; current = $current
       input = $st.tin + $sub.tin; cacheWrite = $st.tcw + $sub.tcw; cacheRead = $st.tcr + $sub.tcr; output = $st.tout + $sub.tout
       subagents = $sub.n; subActive = $sub.active
       model = $st.model; effort = $st.effort
@@ -339,20 +345,26 @@ do {
   }
   $nextSteps = $true
   $hidden = @{}
+  $liveActivity = $true
   if (Test-Path $prefsPath) {
     $p = [System.IO.File]::ReadAllText($prefsPath, $utf8) | ConvertFrom-Json
     if ($p -and $p.nextSteps -eq $false) { $nextSteps = $false }
+    # 本机的 iPhone Live 开关：关了推送器就不往手机推（手机上自己的开关也要开着才推）
+    if ($p -and $p.liveActivity -eq $false) { $liveActivity = $false }
     # 任务板上手动隐藏的已完成会话：会话 id -> 隐藏时它最后一次请求的时间（毫秒）
     if ($p -and $p.hidden) { foreach ($h in $p.hidden.PSObject.Properties) { $hidden[$h.Name] = [int64]$h.Value } }
   }
   $usageText = ''
   if (Test-Path $usagePath) { try { $usageText = [System.IO.File]::ReadAllText($usagePath, $utf8) } catch { } }
   $nowMs = [int64](($now.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds)
-  $json = ConvertTo-Json -InputObject @{
+  $snapLine = @{
     at = $nowMs; device = $Device; os = $os; sessions = @($out)
-    prefs = @{ nextSteps = $nextSteps; hidden = $hidden }; prefsPath = $prefsPath
+    prefs = @{ nextSteps = $nextSteps; hidden = $hidden; liveActivity = $liveActivity }; prefsPath = $prefsPath
     usagePath = $usagePath; usageText = $usageText; inputDir = $inputDir
-  } -Compress -Depth 6
+  }
+  # 本机装了 iPhone Live 推送器（有它的配置文件），任务板上才画「iPhone Live」开关
+  if (Test-Path -LiteralPath $livePath) { $snapLine.livePusher = $true }
+  $json = ConvertTo-Json -InputObject $snapLine -Compress -Depth 6
   # Windows PowerShell 的标准输出走系统代码页，中文会乱码：非 ASCII 一律转成 \uXXXX
   $json = [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
   # 先写临时文件再整个换上，读的一方不会读到半个文件（几个会话同时写，谁后换上算谁的）

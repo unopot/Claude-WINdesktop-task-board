@@ -112,7 +112,7 @@ test('原生风格任务板：每个会话一行带框，开关可见，过期�
       expect(await ui.find({ key: 'row-c' })).toBeDefined()
       expect(await ui.find({ key: 'row-d' })).toBeUndefined()
       expect(await ui.find({ key: 'next-switch' })).toBeDefined()
-      expect(await ui.find({ type: 'Text', text: /^On$/ })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^On$/ })).toBeUndefined()
       expect(await ui.find({ type: 'Text', text: /^38 min$/ })).toBeDefined()
       // 开关、行都不再是 Button（没有旧的反色高亮），点击走透明点击层
       expect(await ui.find({ type: 'Button' })).toBeUndefined()

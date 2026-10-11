@@ -59,6 +59,8 @@ export type Prefs = {
   nextSteps: boolean
   /** 手动隐藏的已完成会话：会话 id → 隐藏时它最后一次请求的时间（毫秒）。之后又有新请求就自动回来 */
   hidden?: Record<string, number>
+  /** 本机的 iPhone Live 开关（推送器读同一个文件）：关了不往手机推；手机设置页自己的开关也要开着才推。不存在 = 开 */
+  liveActivity?: boolean
 }
 
 export type Board = {
@@ -74,10 +76,12 @@ export type Board = {
   usage?: Usage
   /** “在等我决定”标记文件所在的目录（每个会话一个文件，文件名 = 会话 id），由扫描进程给出 */
   inputDir?: string
+  /** 本机装了 iPhone Live 推送器（有 ~/.claude/task-board-live.json），任务板才画 iPhone Live 开关 */
+  livePusher?: boolean
 }
 
 /** 扫描进程输出的一行（也是共用快照 ~/.claude/task-board-snapshot.json 的内容）；usageText = 用量文件原文 */
-export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | 'usagePath' | 'inputDir'> & {
+export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | 'usagePath' | 'inputDir' | 'livePusher'> & {
   usageText?: string
   /** 本机标签（设置项 deviceName；共享目录里的文件名）和系统（win / mac） */
   device?: string
@@ -103,7 +107,7 @@ export type NextView =
 
 declare module 'claude-code' {
   interface PluginState {
-    /** expanded = Running 栏里展开了明细的会话 id（'' = 都收起）；usage = 本会话自己最近一次读到的账号用量；fold = 任务板收起了没有 */
-    'task-board': { board: Board; me: string; showAll: boolean; next: NextView; expanded: string; usage: Usage; fold: Fold }
+    /** expanded = Running 栏里展开了明细的会话 id（'' = 都收起）；usage = 本会话自己最近一次读到的账号用量；fold = 任务板收起了没有；pressed = 鼠标正按着的卡片（按下下沉） */
+    'task-board': { board: Board; me: string; showAll: boolean; next: NextView; expanded: string; usage: Usage; fold: Fold; pressed: string }
   }
 }

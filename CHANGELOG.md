@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.1
+Same as the Mac version's 2.4.4.
+- Each session in the snapshot carries `msgAgeSec`: seconds since its last timestamped message (main transcript or subagents). The desktop app sometimes appends bookkeeping lines to an old session's transcript (Remote Control, cost), which makes the file look new; `ageSec` still follows the file, `msgAgeSec` does not. The iPhone pusher and app use it to decide what finished recently.
+- A session no longer shows as running just because its transcript file was touched: the 90-second "still running" rule also needs a recent message.
+
+## 2.4.0
+Brings over the Mac version's 2.0.1 and 2.4.0–2.4.3 board changes (the shared files are word for word the same again; only the platform section at the top of `register.tsx` differs).
+- **Press feedback**: a card sinks a little while the mouse button is down and comes back when it is released; releasing outside the card cancels the click.
+- **iPhone Live** switch next to **Next step** (also in the Details pane and the phone layout), only when this computer has the TaskBoard pusher's config (`~/.claude/task-board-live.json`). It is this computer's own switch, saved as `liveActivity` in `~/.claude/task-board-prefs.json`; the iPhone app has its own, and the cards are pushed only when both are on.
+- The board's two switches are a name and a slider (no **On** / **Off** text); the Details pane keeps the text.
+- The Done header on the board shows just the count (no "· cache left"); each card still shows its own countdown.
+- **Details** on the board is a three-dot button (⋯) that never gets cut off; the hidden count moved out of it (the Details pane still lists hidden sessions).
+- The scanner (`scan.ps1`) passes on `liveActivity` from the prefs file and `livePusher` when the pusher's config exists.
+
 ## 2.3.0
 - **Title bar counter.** A small coloured count in the Claude desktop app's title bar (yellow needs input, blue running, green done) that is there even when no session is open, or while a Remote Control session from another computer is open. Click it for the sessions, click one to switch to it. A plain C# file (`counter.cs`) compiled by Windows PowerShell at start (`counter.ps1`), started detached and one at a time when a session opens; it sticks to the Claude window and follows it as it moves. New setting **Title bar counter** (on by default) turns it off. Same idea as the Mac version's menu bar counter (same setting key, `menuBar`).
 - `tests/menubar.test.tsx` covers starting it from a desktop session, leaving out an empty shared folder, stopping it when the setting is off, and leaving it alone in sessions with no window.
