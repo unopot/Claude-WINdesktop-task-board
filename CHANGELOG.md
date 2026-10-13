@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.4.3
+- **Only one scanner process per computer.** Sessions and the title bar counter start `scan.ps1 -LeadOnly`: when another scanner already leads, it prints one line `{"follow":"<file>"}` and exits, and the caller reads the leader's output file (`~/.claude/task-board-scan-<id>.json`) every 3 seconds instead of keeping a PowerShell process alive just to pass lines on (each one took 60-110 MB). When that file stops updating for 10 seconds (the leading session closed), the caller starts the scanner again and the first one to get the lock leads.
+
 ## 2.4.2
 Same idea as the Mac version's 2.4.5.
 - **One scanner per computer does the work.** The desktop app keeps recently opened sessions alive in the background, and each one (plus the title bar counter and the iPhone pusher) started its own `scan.ps1`, so several scanners read every transcript every few seconds. Now the first scanner takes a lock (`~/.claude/task-board-scan-<id>.lock`, a file opened with no sharing, released by Windows when the process exits) and writes each line to `~/.claude/task-board-scan-<id>.json`; the others just pass that line on. When the leading session closes, another scanner takes over within a few seconds. Scanners with different settings (hours, max sessions, shared folder, device name) use different locks.

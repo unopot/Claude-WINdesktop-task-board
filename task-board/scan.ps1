@@ -1,7 +1,8 @@
-﻿param([switch]$Once, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
+﻿param([switch]$Once, [switch]$LeadOnly, [int]$Hours = 24, [int]$Max = 12, [int]$IntervalMs = 3000, [string]$Shared = '', [string]$Device = '')
 # 增量扫描 ~/.claude/projects 下各会话的 transcript，每轮输出一行 JSON。
 #   -Shared DIR  跨设备共享目录（同步盘里）：每 10 秒把本机快照写成 DIR\<Device>.json，每轮读目录里其他电脑的快照附在 remote 里
 #   -Device NAME 本机标签（卡片上的灰色小标签，也是共享目录里的文件名；空 = Win）
+#   -LeadOnly    只当主扫描：已经有主扫描在跑就输出一行 {"follow":"<主扫描的输出文件>"} 后退出，调用方自己去读那个文件（不再挂一个进程转发）
 $ErrorActionPreference = 'SilentlyContinue'
 $root = Join-Path $env:USERPROFILE '.claude\projects'
 # 全局开关（所有会话共用）：任务板上按一下就改这个文件，各会话的扫描进程每轮都重读
@@ -218,6 +219,7 @@ function Get-St($path) {
 do {
   # 不是主扫描：先试一次拿锁；拿不到就转发主扫描 10 秒内写的那一行（太旧或不完整就这一轮不输出）
   if (-not $Once -and -not $lockFs -and -not (Try-Lock)) {
+    if ($LeadOnly) { [Console]::Out.WriteLine((ConvertTo-Json -InputObject @{ follow = $fwdPath } -Compress)); [Console]::Out.Flush(); exit 0 }
     try {
       $fi = [System.IO.FileInfo]::new($fwdPath)
       if ($fi.Exists -and ((Get-Date) - $fi.LastWriteTime).TotalSeconds -lt 10) {

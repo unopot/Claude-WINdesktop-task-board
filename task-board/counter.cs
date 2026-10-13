@@ -364,6 +364,8 @@ public class App {
   IntPtr owner = IntPtr.Zero;
   Process scanner; IntPtr job = IntPtr.Zero; DateTime scanStartedAt = DateTime.MinValue;
   volatile string lastLine;
+  // 本机已经有主扫描（扫描脚本输出 {"follow": 文件} 后退出）：不挂扫描进程，每轮直接读那个文件；10 秒没更新就重起扫描脚本接手
+  volatile string followPath;
   Dictionary<string, object> got; List<Row> rows = new List<Row>();
   DateTime themeAt = DateTime.MinValue;
   // Claude 桌面版最后一次还在的时间：连续 APP_GONE_SEC 没有就退出（扫描进程跟着退），下次有会话时插件再拉起
@@ -413,6 +415,7 @@ public class App {
     try { var owner = File.ReadAllText(pidPath).Trim(); if (owner != myPid.ToString()) { Quit(); return; } } catch (FileNotFoundException) { Quit(); return; } catch { }
     if (Process.GetProcessesByName("claude").Length > 0) appSeenAt = DateTime.UtcNow;
     else if ((DateTime.UtcNow - appSeenAt).TotalSeconds >= APP_GONE_SEC) { Quit(); return; }
+    FollowLead();
     EnsureScanner();
     var line = lastLine;
     if (line != null) {
@@ -429,22 +432,43 @@ public class App {
 
   void EnsureScanner() {
     if (scanner != null && !scanner.HasExited) return;
+    if (followPath != null) return;
     if ((DateTime.UtcNow - scanStartedAt).TotalSeconds < 10) return;   // 刚起过又退了：隔 10 秒再试
     scanStartedAt = DateTime.UtcNow;
-    var args = "-NoProfile -ExecutionPolicy Bypass -File \"" + scanPath + "\" -Hours 24 -Max 12";
+    var args = "-NoProfile -ExecutionPolicy Bypass -File \"" + scanPath + "\" -Hours 24 -Max 12 -LeadOnly";
     if (latestShared != "") args += " -Shared \"" + latestShared + "\" -Device \"" + device + "\"";
     var psi = new ProcessStartInfo("powershell.exe", args) {
       UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
     };
     try {
       var p = new Process { StartInfo = psi };
-      p.OutputDataReceived += (s, e) => { if (e.Data != null && e.Data.StartsWith("{")) lastLine = e.Data; };
+      p.OutputDataReceived += (s, e) => {
+        if (e.Data == null || !e.Data.StartsWith("{")) return;
+        if (e.Data.StartsWith("{\"follow\":")) { try { followPath = (string)json.Deserialize<Dictionary<string, object>>(e.Data)["follow"]; } catch { } return; }
+        lastLine = e.Data;
+      };
       p.ErrorDataReceived += (s, e) => { };
       p.Start();
       if (job != IntPtr.Zero) Native.AssignProcessToJobObject(job, p.Handle);
       p.BeginOutputReadLine(); p.BeginErrorReadLine();
       scanner = p;
     } catch { scanner = null; }
+  }
+
+  /** 跟着读主扫描的输出文件：有新的就当成扫描进程的一行；10 秒没更新（主扫描所在的会话关了）就不跟了，马上重起扫描脚本。 */
+  void FollowLead() {
+    var path = followPath;
+    if (path == null) return;
+    try {
+      var fi = new FileInfo(path);
+      if (fi.Exists && (DateTime.UtcNow - fi.LastWriteTimeUtc).TotalSeconds < 10) {
+        var text = File.ReadAllText(path).Trim();
+        if (text.StartsWith("{") && text.EndsWith("}")) lastLine = text;
+        return;
+      }
+    } catch { return; }
+    followPath = null;
+    scanStartedAt = DateTime.MinValue;
   }
 
   string Footer() {

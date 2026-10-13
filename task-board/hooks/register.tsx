@@ -13,7 +13,7 @@ const TITLE = 'Sessions'
 const SCAN_SCRIPT = 'scan.ps1'
 /** 启动扫描进程的命令行；shared 为空 = 不开跨设备共享。 */
 const scanArgv = (script: string, shared: string, device: string) => [
-  'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Hours', '24', '-Max', '12',
+  'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Hours', '24', '-Max', '12', '-LeadOnly',
   ...(shared === '' ? [] : ['-Shared', shared, '-Device', device]),
 ]
 /** 用户主目录（$.env.get 的变量名必须写成字面量），和共用快照的路径。 */
@@ -225,36 +225,79 @@ async function warnCache($: EngineInterface, at: number, sessions: SessionRow[])
 /** 本会话的扫描进程是否在跑（每个会话、每次模块加载只起一个）。 */
 let isWatching = false
 
-/** 后台扫描脚本：每 3 秒输出一行 JSON，模块重载或会话结束时随之退出。 */
+/** 扫描结果的一行：更新任务板、状态栏和缓存提醒。 */
+async function onScan($: EngineInterface, got: ScanLine) {
+  await update($, board, b => boardFrom(got, b))
+  await publishStatus($)
+  await warnCache($, got.at, got.sessions ?? [])
+  // 别的对话把建议关了：本会话正在显示的建议也收起
+  if (got.prefs?.nextSteps === false && (await read($, nextView)).kind !== 'hidden') {
+    await update($, nextView, () => HIDDEN)
+  }
+}
+
+/** 跟着读主扫描的输出文件多久一次、多久没更新算主扫描没了（毫秒）。 */
+const FOLLOW_EVERY_MS = 3000
+const FOLLOW_STALE_MS = 10000
+
+/**
+ * 本机已经有主扫描（别的会话或计数器起的）：不再挂一个扫描进程，直接每 3 秒读它写的输出文件。
+ * 文件 10 秒没更新（主扫描所在的会话关了）就返回，由调用方重起扫描脚本，谁先拿到锁谁当新的主扫描。
+ */
+async function followLead($: EngineInterface, path: string) {
+  let last = 0
+  for (;;) {
+    let got: ScanLine | null = null
+    try {
+      got = JSON.parse(await $.fs.read(path)) as ScanLine
+    } catch {
+      // 正在换上新文件、读到半个：下一轮再读
+    }
+    const now = await $.clock.now()
+    if (got && typeof got.at === 'number') {
+      if (now - got.at > FOLLOW_STALE_MS) return
+      if (got.at !== last) {
+        last = got.at
+        await onScan($, got)
+      }
+    } else if (last && now - last > FOLLOW_STALE_MS) return
+    await $.clock.sleep(FOLLOW_EVERY_MS)
+  }
+}
+
+/**
+ * 后台扫描脚本：每 3 秒输出一行 JSON，模块重载或会话结束时随之退出。
+ * 扫描脚本说本机已经有主扫描（输出 {"follow": 文件}）就退出，这边改读那个文件；那个文件不更新了再重起扫描脚本。
+ */
 async function watch($: EngineInterface) {
   if (isWatching) return
   isWatching = true
   try {
     const script = await scriptPath($)
-    const child = $.process.spawn({
-      argv: scanArgv(script, SHARED_DIR, DEVICE),
-    })
-    let pending = ''
-    for await (const { stream, text } of child) {
-      if (stream !== 'stdout') continue
-      pending += text
-      const lines = pending.split('\n')
-      pending = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.trim()) continue
-        try {
-          const got = JSON.parse(line) as ScanLine
-          await update($, board, b => boardFrom(got, b))
-          await publishStatus($)
-          await warnCache($, got.at, got.sessions ?? [])
-          // 别的对话把建议关了：本会话正在显示的建议也收起
-          if (got.prefs?.nextSteps === false && (await read($, nextView)).kind !== 'hidden') {
-            await update($, nextView, () => HIDDEN)
+    for (;;) {
+      const child = $.process.spawn({
+        argv: scanArgv(script, SHARED_DIR, DEVICE),
+      })
+      let follow = ''
+      let pending = ''
+      for await (const { stream, text } of child) {
+        if (stream !== 'stdout') continue
+        pending += text
+        const lines = pending.split('\n')
+        pending = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const got = JSON.parse(line) as ScanLine & { follow?: string }
+            if (typeof got.follow === 'string') follow = got.follow
+            else await onScan($, got)
+          } catch {
+            // 半行或非 JSON 输出，跳过
           }
-        } catch {
-          // 半行或非 JSON 输出，跳过
         }
       }
+      if (!follow) break
+      await followLead($, follow)
     }
     await update($, board, b => ({ ...b, error: 'Scanner exited — run /task-board to restart it' }))
   } catch (err) {
