@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.4.2
+Same idea as the Mac version's 2.4.5.
+- **One scanner per computer does the work.** The desktop app keeps recently opened sessions alive in the background, and each one (plus the title bar counter and the iPhone pusher) started its own `scan.ps1`, so several scanners read every transcript every few seconds. Now the first scanner takes a lock (`~/.claude/task-board-scan-<id>.lock`, a file opened with no sharing, released by Windows when the process exits) and writes each line to `~/.claude/task-board-scan-<id>.json`; the others just pass that line on. When the leading session closes, another scanner takes over within a few seconds. Scanners with different settings (hours, max sessions, shared folder, device name) use different locks.
+- Only the leading scanner writes the snapshot in the shared folder (still in place, as before).
+- **The title bar counter quits when the desktop app is closed.** It used to keep running (with its own scanner) after you quit the app, so after an update it could keep an old scanner alive across restarts. Now it quits once no Claude app process has been seen for 2 minutes; the next session starts it again.
+- **Your own conflict copies are kept while they are fresh.** iCloud for Windows often renames the just-written `Win.json` to `Win 11.json`; the scanner used to delete that at once, so the shared folder had no snapshot from this computer most of the time and its sessions flickered on the other computer and the phone. Now only conflict copies not updated for 30 seconds are deleted; readers already keep the newest snapshot per device.
+
 ## 2.4.1
 Same as the Mac version's 2.4.4.
 - Each session in the snapshot carries `msgAgeSec`: seconds since its last timestamped message (main transcript or subagents). The desktop app sometimes appends bookkeeping lines to an old session's transcript (Remote Control, cost), which makes the file look new; `ageSec` still follows the file, `msgAgeSec` does not. The iPhone pusher and app use it to decide what finished recently.

@@ -37,7 +37,7 @@ The board lives above the prompt of a session, so you only see it while a sessio
 - A small coloured count in the Claude desktop app's title bar, just left of the icons at the top right: **yellow** = needs input, **blue** = running or waiting, **green** = done (the same sessions the board lists: finished within the last hour with the cache still warm, hidden ones left out). A grey dot when there is nothing.
 - Click it for the list: one row per session with a coloured dot, title, state, project and time; sessions from another computer carry its label. Click a row to switch to that session (one from another computer opens through Remote Control, as on the board).
 - It is a tiny window of its own that sticks to the Claude window: it moves with it, and hides when the window is minimized, on another virtual desktop, or narrower than about 760 px.
-- It starts by itself when a session opens and keeps running after the session closes; only one runs at a time. It has no Exit item: switch **Title bar counter** off in the settings to stop it.
+- It starts by itself when a session opens and keeps running after the session closes; only one runs at a time. When the Claude desktop app has been closed for 2 minutes it quits too (with its scanner), and the next session starts it again. It has no Exit item: switch **Title bar counter** off in the settings to stop it.
 - It is a plain C# file (`counter.cs`) that Windows PowerShell compiles when it starts (`counter.ps1`), with its own copy of the scanner, so nothing to build or install.
 
 The app's own title bar icons differ a little between sessions; the counter keeps a fixed distance from the right edge (`RIGHT_GAP` in `counter.cs`), so on some sessions it sits a little further from them.

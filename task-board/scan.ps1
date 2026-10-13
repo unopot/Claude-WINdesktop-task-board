@@ -26,6 +26,18 @@ if ($Shared) {
 }
 # 共享目录里的快照超过这么久没更新 = 那台电脑离线，不显示（和插件里的 SNAP_MAX_SEC 一致）
 $SHARED_MAX_MS = 10 * 60 * 1000
+# 一台电脑只让一个扫描进程真扫：App 让最近打开过的会话都在后台挂着，每个会话（还有标题栏计数、推送器）各起一个扫描进程。
+# 参数一样的进程共用一把锁：拿到锁的是主扫描，每轮把输出也写进本机文件；其他的每轮先试一次拿锁，拿不到就转发那个文件。
+# 锁是不共享打开的文件句柄，进程退出系统自动放锁，下一个进程这一轮就接手。-Once（测试）不排队，直接扫。
+$sharedKey = if ($Shared) { [System.IO.Path]::GetFullPath($Shared).TrimEnd('\').ToLowerInvariant() } else { '' }
+$md5 = [System.Security.Cryptography.MD5]::Create()
+$scanId = -join ($md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$Hours|$Max|$sharedKey|$Device")) | Select-Object -First 4 | ForEach-Object { $_.ToString('x2') })
+$lockPath = Join-Path $env:USERPROFILE ".claude\task-board-scan-$scanId.lock"
+$fwdPath = Join-Path $env:USERPROFILE ".claude\task-board-scan-$scanId.json"
+$lockFs = $null
+function Try-Lock {
+  try { $script:lockFs = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None'); return $true } catch { return $false }
+}
 $files = @{}   # path -> 增量状态
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $rxId = [regex]'"id":"(msg_[^"]+)"'
@@ -204,6 +216,18 @@ function Get-St($path) {
 }
 
 do {
+  # 不是主扫描：先试一次拿锁；拿不到就转发主扫描 10 秒内写的那一行（太旧或不完整就这一轮不输出）
+  if (-not $Once -and -not $lockFs -and -not (Try-Lock)) {
+    try {
+      $fi = [System.IO.FileInfo]::new($fwdPath)
+      if ($fi.Exists -and ((Get-Date) - $fi.LastWriteTime).TotalSeconds -lt 10) {
+        $text = [System.IO.File]::ReadAllText($fwdPath, $utf8).Trim()
+        if ($text.StartsWith('{') -and $text.EndsWith('}')) { [Console]::Out.WriteLine($text); [Console]::Out.Flush() }
+      }
+    } catch { }
+    Start-Sleep -Milliseconds $IntervalMs
+    continue
+  }
   $now = Get-Date
   $cut = $now.AddHours(-$Hours)
   $desk = Get-DesktopMap
@@ -385,9 +409,12 @@ do {
     if ($writeSnap) { try { [System.IO.File]::WriteAllText((Join-Path $Shared "$Device.json"), $json, $utf8) } catch { } }
     $remote = @()
     foreach ($rf in Get-ChildItem -LiteralPath $Shared -File) {
-      # 同步盘给本机文件生成的冲突副本（Win 2.json、Win(1).json）和残留的临时文件：是本机自己的东西，删掉
+      # 同步盘给本机文件生成的冲突副本（Win 2.json、Win(1).json）和残留的临时文件：是本机自己的东西，删掉。
+      # 但 iCloud for Windows 常把刚原地写好的 Win.json 直接改名成 “Win 11.json”：那份就是最新的快照，马上删的话
+      # 共享目录里大部分时间没有本机快照，别的电脑上这台的会话时有时无。所以只删 30 秒没更新的；读的一方按 device 留最新的
       if ($rf.Name -match ('^' + [regex]::Escape($Device) + '( \d+|\(\d+\))\.json$') -or $rf.Name -like "$Device.json.*.tmp") {
-        Remove-Item -LiteralPath $rf.FullName -Force -ErrorAction SilentlyContinue; continue
+        if (($now.ToUniversalTime() - $rf.LastWriteTimeUtc).TotalSeconds -ge 30) { Remove-Item -LiteralPath $rf.FullName -Force -ErrorAction SilentlyContinue }
+        continue
       }
       if ($rf.Extension -ne '.json' -or $rf.Name -eq "$Device.json") { continue }
       try {
@@ -410,6 +437,8 @@ do {
   }
   [Console]::Out.WriteLine($json)
   [Console]::Out.Flush()
+  # 主扫描：同一行写给跟随的扫描进程转发（本机文件，换名写没问题）
+  if ($lockFs) { & $swap $json $fwdPath }
   # 本机的共用快照最多 10 秒写一次（带 remote：新会话一启动就能看到别的电脑）
   if ($writeSnap) {
     $lastSnap = $now

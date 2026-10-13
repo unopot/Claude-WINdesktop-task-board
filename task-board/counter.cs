@@ -366,6 +366,9 @@ public class App {
   volatile string lastLine;
   Dictionary<string, object> got; List<Row> rows = new List<Row>();
   DateTime themeAt = DateTime.MinValue;
+  // Claude 桌面版最后一次还在的时间：连续 APP_GONE_SEC 没有就退出（扫描进程跟着退），下次有会话时插件再拉起
+  DateTime appSeenAt = DateTime.UtcNow;
+  const int APP_GONE_SEC = 120;
   // 跟着 Claude 窗口走：订阅它所在进程的“位置变了 / 最小化”事件，一动就当场重新摆（只靠定时器查会落后半秒）
   Native.WinEventProc hookProc; readonly List<IntPtr> hooks = new List<IntPtr>(); uint hookedPid;
   int pillW = -1;
@@ -404,10 +407,12 @@ public class App {
     Application.ExitThread();
   }
 
-  /** 每 2 秒：插件升级（旧版本目录没了）或者被新实例顶掉就退出；守住扫描进程；读新数据。 */
+  /** 每 2 秒：插件升级（旧版本目录没了）、被新实例顶掉、Claude 桌面版关了 2 分钟就退出；守住扫描进程；读新数据。 */
   void Tick() {
     if (scanPath == "" || !File.Exists(scanPath)) { Quit(); return; }
     try { var owner = File.ReadAllText(pidPath).Trim(); if (owner != myPid.ToString()) { Quit(); return; } } catch (FileNotFoundException) { Quit(); return; } catch { }
+    if (Process.GetProcessesByName("claude").Length > 0) appSeenAt = DateTime.UtcNow;
+    else if ((DateTime.UtcNow - appSeenAt).TotalSeconds >= APP_GONE_SEC) { Quit(); return; }
     EnsureScanner();
     var line = lastLine;
     if (line != null) {
