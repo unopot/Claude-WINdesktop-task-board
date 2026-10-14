@@ -78,7 +78,6 @@ function New-FileState {
      todoT = @{}; lastDone = $null
      turnAt = $null     # 这一轮用户提问的时间（没有任务清单时的总耗时从这里算）
      bg = @{}           # 还在后台跑的活：编号 -> 派出去的时间（UTC）
-     askAt = $null      # 这一轮结尾的“下一步”框在问我（wrap_up 带 ask）的时间
      waitId = ''; waitAt = $null   # 还没答的提问 / 计划审批 / 开新会话卡片：工具调用 id 和时间
      model = ''; tool = ''; firstTs = $null; lastTs = $null; effort = ''; calls = 0 }   # 子代理行用
 }
@@ -145,7 +144,7 @@ function Read-New($path, $st) {
     # 用户亲手发的提问 = 新一轮开始（工具结果、系统附带的消息没有这个标记）
     if ($line.IndexOf('"origin":{"kind":"human"}', [StringComparison]::Ordinal) -ge 0) {
       if ($lts) { $st.turnAt = $lts }
-      $st.askAt = $null; $st.waitId = ''   # 我发了话 = 上一轮问我的已经答了
+      $st.waitId = ''   # 我发了话 = 上一轮问我的已经答了
     }
     # 派到后台：Bash 的 backgroundTaskId，子代理 / Workflow 的 async_launched（只看 toolUseResult 里没转义的字段）
     $tr = $line.IndexOf('"toolUseResult":{', [StringComparison]::Ordinal)
@@ -165,9 +164,6 @@ function Read-New($path, $st) {
       if ($st.kind -eq 'assistant') {
         $mm = $rxModel.Match($line); if ($mm.Success) { $st.model = $mm.Groups[1].Value }
         $tl = $rxTool.Matches($line); if ($tl.Count -gt 0) { $st.tool = $tl[$tl.Count - 1].Groups[1].Value; $st.calls += $tl.Count }
-        # 这一轮的“下一步”框：带 ask 就是在问我（按钮答完会作为我发的话进来）
-        $wu = $line.IndexOf('"name":"mcp__ccd_turn__wrap_up","input":{', [StringComparison]::Ordinal)
-        if ($wu -ge 0) { $st.askAt = if ($line.IndexOf('"ask":"', $wu, [StringComparison]::Ordinal) -ge 0) { $lts } else { $null } }
         $wt = $rxWaitTool.Match($line)
         if ($wt.Success -and ($wt.Groups[2].Value -ne 'mcp__ccd_session__start_session' -or $line.IndexOf('"initiation":"offer"', [StringComparison]::Ordinal) -ge 0)) {
           $st.waitId = $wt.Groups[1].Value; $st.waitAt = $lts
@@ -366,9 +362,9 @@ do {
     $old = $nowU.AddHours(-$PENDING_MAX_H)
     foreach ($bk in @($st.bg.Keys)) { if ($st.bg[$bk] -lt $old) { $st.bg.Remove($bk) } }
     if (($status -eq 'done' -or $status -eq 'idle') -and $st.bg.Count -gt 0) { $status = 'running' }
-    # 在等我：提问 / 计划审批 / 开新会话卡片还没答，或者这一轮结尾的“下一步”框在问我
+    # 在等我：弹出来要我点的提问 / 计划审批 / 开新会话卡片还没答（这一轮结尾“下一步”框里的问题不算：那一轮已经做完了）
     if ($st.waitId -and $st.waitAt -and $st.waitAt -lt $old) { $st.waitId = '' }
-    $asking = ($st.waitId -or ($st.askAt -and $st.askAt -ge $old -and $st.kind -eq 'assistant' -and $st.stop -eq 'end_turn'))
+    $asking = [bool]$st.waitId
     if ($asking) { $status = 'input' }
     # 会话自己报的“在等我决定”（授权框、提问、MCP 表单）比上面的猜测准：标记之后 transcript 没有新内容就算数
     # （答完会写工具结果，transcript 就比标记新了；会话没来得及清掉标记也不会一直挂着）

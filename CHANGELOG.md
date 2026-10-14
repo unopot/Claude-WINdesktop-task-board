@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.6.1
+- **Only pop-ups turn a card yellow.** A question in the next-step box at the end of a turn no longer counts as needs input: that turn is done (green). Yellow is for things that pop up and wait for your click: permission dialogs, questions, plan approvals, MCP forms and "New session / Do it here" cards.
+
 ## 2.6.0
 - **Background work keeps a card running.** The desktop app now sends subagents, long commands and workflows to the background and ends the turn; the card used to turn green while they were still running. A background command, subagent or workflow now counts as running until its completion notice arrives (at most 6 hours).
 - **More kinds of "needs input".** A turn that ends with a question in the next-step box, an unanswered plan approval, and a "New session / Do it here" card now turn the card yellow, along with permission dialogs, questions and MCP forms. Replying clears it.
