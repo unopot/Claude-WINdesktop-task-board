@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.6.0
+- **Background work keeps a card running.** The desktop app now sends subagents, long commands and workflows to the background and ends the turn; the card used to turn green while they were still running. A background command, subagent or workflow now counts as running until its completion notice arrives (at most 6 hours).
+- **More kinds of "needs input".** A turn that ends with a question in the next-step box, an unanswered plan approval, and a "New session / Do it here" card now turn the card yellow, along with permission dialogs, questions and MCP forms. Replying clears it.
+- **Steps from the desktop app's task list.** Sessions that keep their plan with the desktop app's own task list (instead of TaskCreate or TodoWrite) show their steps, progress and step times again.
+
 ## 2.5.0
 - **Context ring.** The Running header now has a second ring between the title and the usage ring: how full this session's context window is (the figure the desktop app no longer shows by the prompt box), coloured from 80%.
 - The usage ring is labelled **5h Usage** and reads `· in 2h 27m` instead of `· resets in 2h 27m`.
