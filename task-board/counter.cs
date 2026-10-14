@@ -353,7 +353,7 @@ class Menu : Floating {
 
 public class App {
   // 胶囊在标题栏里的位置（按 96 dpi 的像素；实际乘以 Claude 窗口的缩放）：右边离窗口右边缘 RIGHT_GAP，上边离顶 TOP，高 HEIGHT
-  const int RIGHT_GAP = 318, TOP = 9, HEIGHT = 18, MIN_WIDTH = 760;
+  const int RIGHT_GAP = 350, TOP = 9, HEIGHT = 18, MIN_WIDTH = 760;
 
   readonly string scanPath, latestShared, device, pidPath;
   readonly int ttlSec;
