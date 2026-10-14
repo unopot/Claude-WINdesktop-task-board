@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.4.4
+- **Title bar counter moved left.** A desktop app update added a button left of the terminal button and the counter covered it; the counter now sits clear of it.
+
 ## 2.4.3
 - **Only one scanner process per computer.** Sessions and the title bar counter start `scan.ps1 -LeadOnly`: when another scanner already leads, it prints one line `{"follow":"<file>"}` and exits, and the caller reads the leader's output file (`~/.claude/task-board-scan-<id>.json`) every 3 seconds instead of keeping a PowerShell process alive just to pass lines on (each one took 60-110 MB). When that file stops updating for 10 seconds (the leading session closed), the caller starts the scanner again and the first one to get the lock leads.
 
