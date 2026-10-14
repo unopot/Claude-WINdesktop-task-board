@@ -18,7 +18,7 @@ Expand a running card to see its task list by stage, how long each step took, wh
 | yellow | `needs input` | waiting for you: a permission dialog, a question, or an MCP form |
 | light blue | `waiting` | stopped on a long tool call that does not need you |
 
-Each card also shows the elapsed time, how many subagents are running and the tokens used. The ring at the top right is your account's five-hour usage limit (the *Current session* figure on the Usage page), with the time until it resets.
+Each card also shows the elapsed time, how many subagents are running and the tokens used. The ring at the top right (*5h Usage*) is your account's five-hour usage limit (the *Current session* figure on the Usage page), with the time until it resets. The *Context* ring next to it shows how full this session's context window is.
 
 **Done** (right column): finished sessions with a countdown of their prompt cache. When the cache expires, the next message rewrites the whole context, so this tells you which conversations are still cheap to continue. The session you are in gets a toast a few minutes before its cache runs out.
 

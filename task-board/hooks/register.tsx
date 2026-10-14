@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { Board, Fold, NextView, Prefs, ScanLine, SessionRow, SessionStatus, SubRow, Suggestion, Usage } from '../types'
+import type { Board, ContextFill, Fold, NextView, Prefs, ScanLine, SessionRow, SessionStatus, SubRow, Suggestion, Usage } from '../types'
 import { costOf, forkPrompt, nextOptions, parseSuggestions, skillList } from './next-steps'
 import { chevronSvg, clock, dur, elapsed, eyeOffSvg, foldSvg, freshest, isHidden, lastReqMs, limitNow, mainLine, mergeRemote, modelName, moreSubs, percent, planOpen, pruneHidden, rebaseScan, resetIn, ringHex, ringSvg, segSvg, stagesOf, stepLines, subsByStep } from './plan'
 
@@ -43,6 +43,8 @@ const HIDDEN: NextView = { kind: 'hidden' }
 const expanded = atom({ plugin: 'task-board', key: 'expanded' } as const, '')
 /** 本会话自己最近一次读到的账号用量（别的会话读到的经扫描进程转来，在 board.usage）。 */
 const usage = atom({ plugin: 'task-board', key: 'usage' } as const, { at: 0, limits: [] } as Usage)
+/** 本会话的 context 占用（引擎每轮回答完推过来；新会话 / 刚压缩完、还没有回答时没有 percent）。 */
+const context = atom({ plugin: 'task-board', key: 'context' } as const, { window: 0 } as ContextFill)
 /** 任务板收起了没有（本会话）；没记过的读 $.store 里上次的选择，再没有就用默认。 */
 const fold = atom({ plugin: 'task-board', key: 'fold' } as const, {} as Fold)
 /** 鼠标正按着的卡片 id（'' = 没有）：按下下沉约 4px，松开复原。 */
@@ -811,6 +813,7 @@ export const register: Register = (on, options) => {
   // 每轮回答完、或额度窗口变化满 1 个百分点时，引擎把最新的用量推过来
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) await saveUsage($, e.rateLimits)
+    if (e.changed.includes('context')) await update($, context, () => ({ tokens: e.context.tokens, window: e.context.window, percent: e.context.percent }))
     return next(e)
   })
 
@@ -819,7 +822,13 @@ export const register: Register = (on, options) => {
     void watch($)
     void ensureMenubar($)
     // 续上的会话可能已经有用量读数了：先显示出来
-    void $.session.usage().then(x => saveUsage($, x.rateLimits)).catch(() => undefined)
+    void $.session
+      .usage()
+      .then(async x => {
+        await update($, context, () => ({ tokens: x.context.tokens, window: x.context.window, percent: x.context.percent }))
+        await saveUsage($, x.rateLimits)
+      })
+      .catch(() => undefined)
     return next(e)
   })
 
@@ -1148,7 +1157,7 @@ export const register: Register = (on, options) => {
               <Box key="folded-usage" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
                 <Svg source={ringSvg(five.pct)} alt={`Current session usage ${Math.round(five.pct)}%`} width={16} height={16} />
                 <Text>
-                  <Text dimColor>Session </Text>
+                  <Text dimColor>5h Usage </Text>
                   <Text bold color={five.pct >= 80 ? ringHex(five.pct) : undefined}>{Math.round(five.pct)}%</Text>
                 </Text>
               </Box>
@@ -1430,9 +1439,26 @@ export const register: Register = (on, options) => {
           height={16}
         />
         <Text>
-          <Text dimColor>Session </Text>
+          <Text dimColor>5h Usage </Text>
           <Text bold color={five.pct >= 80 ? ringHex(five.pct) : undefined}>{Math.round(five.pct)}%</Text>
-          {five.left > 0 && <Text dimColor> · resets in {resetIn(five.left)}</Text>}
+          {five.left > 0 && <Text dimColor> · in {resetIn(five.left)}</Text>}
+        </Text>
+      </Box>
+    )
+
+    // 本会话的 context 占用（桌面版输入框旁原来的那个百分比）：放在 Running 标题和额度圆环中间
+    const cx = await read($, context)
+    const ctxRing = cx.percent !== undefined && (
+      <Box key="context-ring" flexDirection="row" alignItems="center" gap={1} flexShrink={0}>
+        <Svg
+          source={ringSvg(cx.percent)}
+          alt={`Context ${Math.round(cx.percent)}%${cx.tokens !== undefined ? `, ${fmt(cx.tokens)} of ${fmt(cx.window)} tokens` : ''}`}
+          width={16}
+          height={16}
+        />
+        <Text>
+          <Text dimColor>Context </Text>
+          <Text bold color={cx.percent >= 80 ? ringHex(cx.percent) : undefined}>{Math.round(cx.percent)}%</Text>
         </Text>
       </Box>
     )
@@ -1459,6 +1485,7 @@ export const register: Register = (on, options) => {
                 <Text dimColor wrap="truncate-end">{live.length} · {fmt(tokens)} tok</Text>
               </Box>
             </Box>
+            {ctxRing}
             {ring}
           </Box>
           <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1} width="50%" minWidth={0}>

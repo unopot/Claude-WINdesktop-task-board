@@ -94,6 +94,8 @@ export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | '
 export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
 /** 一次用量读数：at = 读到的时间（毫秒） */
 export type Usage = { at: number; limits: Limit[] }
+/** 本会话的 context 占用：tokens / window = percent；新会话或刚压缩完、还没有回答时 tokens、percent 没有。 */
+export type ContextFill = { tokens?: number; window: number; percent?: number }
 
 /** 任务板收起了没有，按设备分开记：true = 收起成一行；没记过的用默认（手机收起、桌面展开） */
 export type Fold = { desktop?: boolean; mobile?: boolean }
@@ -107,7 +109,7 @@ export type NextView =
 
 declare module 'claude-code' {
   interface PluginState {
-    /** expanded = Running 栏里展开了明细的会话 id（'' = 都收起）；usage = 本会话自己最近一次读到的账号用量；fold = 任务板收起了没有；pressed = 鼠标正按着的卡片（按下下沉） */
-    'task-board': { board: Board; me: string; showAll: boolean; next: NextView; expanded: string; usage: Usage; fold: Fold; pressed: string }
+    /** expanded = Running 栏里展开了明细的会话 id（'' = 都收起）；usage = 本会话自己最近一次读到的账号用量；context = 本会话的 context 占用；fold = 任务板收起了没有；pressed = 鼠标正按着的卡片（按下下沉） */
+    'task-board': { board: Board; me: string; showAll: boolean; next: NextView; expanded: string; usage: Usage; context: ContextFill; fold: Fold; pressed: string }
   }
 }

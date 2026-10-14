@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.0
+- **Context ring.** The Running header now has a second ring between the title and the usage ring: how full this session's context window is (the figure the desktop app no longer shows by the prompt box), coloured from 80%.
+- The usage ring is labelled **5h Usage** and reads `· in 2h 27m` instead of `· resets in 2h 27m`.
+
 ## 2.4.4
 - **Title bar counter moved left.** A desktop app update added a button left of the terminal button and the counter covered it; the counter now sits clear of it.
 
