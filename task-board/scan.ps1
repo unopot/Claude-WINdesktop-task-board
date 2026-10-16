@@ -57,6 +57,7 @@ $rxEffort = [regex]'"effort":"([a-z]+)"'
 $rxBgCmd = [regex]'"backgroundTaskId":"([A-Za-z0-9_-]+)"'
 $rxBgAsync = [regex]'"(?:agentId|taskId)":"([A-Za-z0-9_-]+)"'
 $rxBgDone = [regex]'<task-id>([A-Za-z0-9_-]+)</task-id>(?:(?!</task-notification>).)*?<status>(?:completed|failed|killed|stopped)</status>'
+$rxBgStop = [regex]'"task_id":"([A-Za-z0-9_-]+)"'
 # 要我答了才继续的工具：提问、计划审批、“开新会话 / 在这里做”卡片（start_session 的 offer）
 $rxWaitTool = [regex]'"type":"tool_use","id":"([^"]+)","name":"(AskUserQuestion|ExitPlanMode|mcp__ccd_session__start_session)"'
 # 后台的活和“在等我”的工具超过这么久还没结果就不算了（会话被关掉、App 重启时不会有完成通知）
@@ -153,6 +154,10 @@ function Read-New($path, $st) {
       $bm = $rxBgCmd.Match($rest)
       if (-not $bm.Success -and $rest.IndexOf('"status":"async_launched"', [StringComparison]::Ordinal) -ge 0) { $bm = $rxBgAsync.Match($rest) }
       if ($bm.Success) { $st.bg[$bm.Groups[1].Value] = if ($lts) { $lts } else { [datetime]::UtcNow } }
+      # TaskStop 停掉的不会再有完成通知：停成功就算结束
+      if ($st.bg.Count -gt 0 -and $rest.IndexOf('"message":"Successfully stopped task', [StringComparison]::Ordinal) -ge 0) {
+        $sm = $rxBgStop.Match($rest); if ($sm.Success) { $st.bg.Remove($sm.Groups[1].Value) }
+      }
     }
     if ($st.bg.Count -gt 0 -and $line.IndexOf('<task-id>', [StringComparison]::Ordinal) -ge 0) {
       foreach ($dm in $rxBgDone.Matches($line)) { $st.bg.Remove($dm.Groups[1].Value) }

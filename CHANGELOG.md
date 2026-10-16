@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.6.2
+- **A background task stopped with TaskStop counts as finished.** A stopped task never sends a completion notice, so the card stayed running for up to 6 hours after the turn ended.
+
 ## 2.6.1
 - **Only pop-ups turn a card yellow.** A question in the next-step box at the end of a turn no longer counts as needs input: that turn is done (green). Yellow is for things that pop up and wait for your click: permission dialogs, questions, plan approvals, MCP forms and "New session / Do it here" cards.
 
