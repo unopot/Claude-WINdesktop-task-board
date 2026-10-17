@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.6.3
+- **The whole card is clickable.** Only the title row and the progress line used to open a session. A click is also no longer cancelled when the card sinks under the pointer: releasing on the spot opens the session the first time, instead of sometimes needing several clicks.
+
 ## 2.6.2
 - **A background task stopped with TaskStop counts as finished.** A stopped task never sends a completion notice, so the card stayed running for up to 6 hours after the turn ended.
 

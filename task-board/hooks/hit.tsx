@@ -29,7 +29,9 @@ const Hit: ClientModule<HitProps> = (props, surface) => {
     if (ev.type === 'down') surface.post({ a: 'press', p: props.p })
     else if (ev.type === 'up') {
       // 还没排过版（columns / rows 为 0）就当在里面
-      const inside = ev.x >= 0 && ev.y >= 0 && (surface.columns === 0 || ev.x < surface.columns) && (surface.rows === 0 || ev.y < surface.rows)
+      // 按下后卡片下沉约半行（PRESS_ROWS），原地松开时指针会落在点击层上边缘外面那半行里：也算在里面
+      const top = ev.fine ? ev.fine.y >= -0.5 : ev.y >= -1
+      const inside = ev.x >= 0 && top && (surface.columns === 0 || ev.x < surface.columns) && (surface.rows === 0 || ev.y < surface.rows)
       surface.post({ a: inside ? props.a : 'noop', t: props.t ?? null, p: props.p })
     }
   })

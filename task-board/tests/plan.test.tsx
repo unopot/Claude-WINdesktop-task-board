@@ -522,6 +522,15 @@ test('桌面：按住卡片下沉（上边距 +0.4、下边距 -0.4），松开�
   await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'go-c' })
   expect((await card())?.props.marginTop).toBe(1)
   expect(toasts.some(t => t.includes('Switching to "别的会话"'))).toBe(true)
+  // 原地松开时卡片已下沉半行，指针落在点击层上边缘外一行内：也算在卡上
+  const n = toasts.length
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-c' })
+  await ui.pointer({ type: 'up', x: 1, y: -1, button: 'left', in: 'go-c' })
+  expect(toasts.length).toBe(n + 1)
+  // 再往上就是卡片外：取消
+  await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-c' })
+  await ui.pointer({ type: 'up', x: 1, y: -2, button: 'left', in: 'go-c' })
+  expect(toasts.length).toBe(n + 1)
   // 本会话的卡不可点，也不下沉
   expect(await ui.find({ key: 'go-b' })).toBeUndefined()
 })
@@ -584,7 +593,8 @@ test('桌面：别的电脑的会话带灰色标签（那台电脑的名字）�
   expect(await ui.find({ type: 'Text', text: /^ Mac $/ })).toBeUndefined()
   // 有 Remote Control 编号的远端卡可点：打开 claude://claude.ai/code/<编号>，不用那台电脑自己的 local_ 链接
   expect(await ui.find({ key: 'go-m' })).toBeDefined()
-  expect(await ui.find({ key: 'go2-m' })).toBeDefined()
+  // 整张卡只有一个点击层
+  expect(await ui.find({ key: 'go2-m' })).toBeUndefined()
   await ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: 'go-m' })
   await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'go-m' })
   expect(runs).toEqual([['rundll32.exe', 'url.dll,FileProtocolHandler', 'claude://claude.ai/code/session_01Test']])
@@ -625,7 +635,7 @@ test('Details 窗：别的电脑的会话有那台电脑的标签；有 Remote C
   expect(await ui.find({ key: 'pane-go-m' })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go2-m' })).toBeUndefined()
   expect(await ui.find({ key: 'pane-go-r' })).toBeDefined()
-  expect(await ui.find({ key: 'pane-go2-r' })).toBeDefined()
+  expect(await ui.find({ key: 'pane-go2-r' })).toBeUndefined()
   await ui.unmount()
 })
 
