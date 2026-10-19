@@ -1,5 +1,6 @@
 ﻿// 标题栏计数：贴在 Claude 桌面应用窗口标题栏右侧的一个小胶囊（黄 = needs input，蓝 = running / waiting，绿 = done），
 // 点开是各会话，点一行切过去。不长在会话里：停在新建会话页、开着 Remote Control 会话时也看得到。
+// 胶囊左边还有三个窗口摆放按钮：把 Claude 窗口摆到所在屏幕的左 / 中 / 右三分之一（宽屏用）。
 // counter.ps1 用 Windows 自带的 PowerShell（Add-Type）当场编译它，不用另装任何东西。
 //
 // 它是一个很小的独立窗口，“属于” Claude 窗口（owner）：总在 Claude 窗口上面，跟着它移动，Claude 最小化 / 被挡住 / 关掉时一起不见。
@@ -129,6 +130,11 @@ static class Native {
   [DllImport("user32.dll")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint f);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
   public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr h, int idObject, int idChild, uint thread, uint time);
   [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc f, uint pid, uint thread, uint flags);
   [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
@@ -351,6 +357,52 @@ class Menu : Floating {
   }
 }
 
+/** 窗口摆放：三个小按钮（左 1/3、中 1/3、右 1/3），点一下把 Claude 窗口摆到它所在屏幕工作区的那一份。 */
+class Snap : Floating {
+  public Theme Theme; public float Zoom = 1; public Action<int> Clicked;
+  // 按 96 dpi 的像素：每个按钮宽 SEG，两头留 PAD
+  const int SEG = 22, PAD = 3;
+  static readonly string[] TIPS = { "Left third", "Middle third", "Right third" };
+  int hover = -1;
+  readonly ToolTip tip = new ToolTip { InitialDelay = 400, ShowAlways = true };
+  protected override CreateParams CreateParams {
+    get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000; /* WS_EX_NOACTIVATE */ return cp; }
+  }
+  protected override bool ShowWithoutActivation { get { return true; } }
+  public Snap() { Cursor = Cursors.Hand; }
+  public int Measure() { return (int)Math.Ceiling((PAD * 2 + SEG * 3) * Zoom); }
+  int SegAt(int x) { var i = (int)Math.Floor((x - PAD * Zoom) / (SEG * Zoom)); return i >= 0 && i < 3 ? i : -1; }
+  protected override void OnMouseMove(MouseEventArgs e) {
+    var i = SegAt(e.X); if (i == hover) return;
+    hover = i; tip.SetToolTip(this, i >= 0 ? TIPS[i] : ""); Invalidate();
+  }
+  protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); }
+  protected override void OnMouseUp(MouseEventArgs e) {
+    var i = SegAt(e.X);
+    if (e.Button == MouseButtons.Left && i >= 0 && Clicked != null) Clicked(i);
+  }
+
+  protected override void OnPaint(PaintEventArgs e) {
+    var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+    g.Clear(Theme.Dark ? Color.FromArgb(0x1f, 0x1f, 0x1f) : Color.FromArgb(0xf8, 0xf8, 0xf8));
+    using (var path = Draw.Round(new RectangleF(0.5f, 0.5f, Width - 1, Height - 1), 6 * Zoom)) {
+      using (var b = new SolidBrush(Theme.PillBg)) g.FillPath(b, path);
+      using (var pen = new Pen(Theme.PillLine)) g.DrawPath(pen, path);
+    }
+    // 每个按钮画一个小屏幕：外框 + 对应的那三分之一涂满
+    float iw = 14 * Zoom, ih = 9 * Zoom, cy = Height / 2f;
+    for (var i = 0; i < 3; i++) {
+      var sx = (PAD + SEG * i) * Zoom;
+      if (i == hover)
+        using (var hp = Draw.Round(new RectangleF(sx + 1 * Zoom, 2 * Zoom, SEG * Zoom - 2 * Zoom, Height - 4 * Zoom), 4 * Zoom))
+        using (var hb = new SolidBrush(Theme.Hover)) g.FillPath(hb, hp);
+      var box = new RectangleF(sx + (SEG * Zoom - iw) / 2, cy - ih / 2, iw, ih);
+      using (var fb = new SolidBrush(i == hover ? Theme.Text : Theme.Muted)) g.FillRectangle(fb, box.X + iw * i / 3, box.Y, iw / 3, ih);
+      using (var pen = new Pen(i == hover ? Theme.Text : Theme.Muted, Math.Max(1, Zoom))) g.DrawRectangle(pen, box.X, box.Y, box.Width, box.Height);
+    }
+  }
+}
+
 public class App {
   // 胶囊在标题栏里的位置（按 96 dpi 的像素；实际乘以 Claude 窗口的缩放）：右边离窗口右边缘 RIGHT_GAP，上边离顶 TOP，高 HEIGHT
   const int RIGHT_GAP = 350, TOP = 9, HEIGHT = 18, MIN_WIDTH = 760;
@@ -360,7 +412,9 @@ public class App {
   readonly int myPid = Process.GetCurrentProcess().Id;
   readonly JavaScriptSerializer json = new JavaScriptSerializer { MaxJsonLength = int.MaxValue };
   readonly Theme theme = new Theme();
-  Pill pill; Menu menu; Timer timer;
+  // 窗口摆放按钮在胶囊左边，隔 SNAP_GAP
+  const int SNAP_GAP = 6;
+  Pill pill; Snap snap; Menu menu; Timer timer;
   IntPtr owner = IntPtr.Zero;
   Process scanner; IntPtr job = IntPtr.Zero; DateTime scanStartedAt = DateTime.MinValue;
   volatile string lastLine;
@@ -388,6 +442,7 @@ public class App {
 
   void Start() {
     pill = new Pill { Rows = () => rows, Theme = theme, Clicked = Toggle };
+    snap = new Snap { Theme = theme, Clicked = SnapTo };
     menu = new Menu { Theme = theme };
     job = Native.CreateJobObject(IntPtr.Zero, null);
     var info = new Native.JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
@@ -521,10 +576,10 @@ public class App {
     bool show = owner != IntPtr.Zero && !Native.IsIconic(owner)
       && Native.DwmGetWindowAttribute(owner, 9 /* EXTENDED_FRAME_BOUNDS */, out r, Marshal.SizeOf(typeof(Native.RECT))) == 0
       && !(Native.DwmGetWindowAttribute(owner, 14 /* CLOAKED */, out cloaked, 4) == 0 && cloaked != 0);
-    if (!show) { if (pill.Visible) pill.Hide(); if (menu.Visible) menu.Hide(); return; }
+    if (!show) { HideAll(); return; }
     float s = Native.GetDpiForWindow(owner) / 96f; if (s <= 0) s = 1;
-    if (r.Right - r.Left < MIN_WIDTH * s) { if (pill.Visible) pill.Hide(); if (menu.Visible) menu.Hide(); return; }
-    if (Math.Abs(s - pill.Zoom) > 0.01 || pillW < 0) { pill.Zoom = s; menu.Zoom = s; pillW = pill.Measure(); }
+    if (r.Right - r.Left < MIN_WIDTH * s) { HideAll(); return; }
+    if (Math.Abs(s - pill.Zoom) > 0.01 || pillW < 0) { pill.Zoom = s; menu.Zoom = s; snap.Zoom = s; pillW = pill.Measure(); }
     if ((DateTime.UtcNow - themeAt).TotalSeconds > 5) { themeAt = DateTime.UtcNow; SampleTheme(r, s); }
     var w = pillW; var hgt = (int)(HEIGHT * s);
     var x = r.Right - (int)(RIGHT_GAP * s) - w; var y = r.Top + (int)(TOP * s);
@@ -536,7 +591,44 @@ public class App {
       Native.SetWindowPos(pill.Handle, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);   // NOSIZE | NOZORDER | NOACTIVATE：只挪不重画
     }
     if (!pill.Visible) { pill.Show(); pill.Own(owner); }
+    var sw = snap.Measure(); var sx = x - (int)(SNAP_GAP * s) - sw;
+    if (snap.Width != sw || snap.Height != hgt) {
+      snap.SetBounds(sx, y, sw, hgt);
+      using (var path = Draw.Round(new RectangleF(0, 0, sw, hgt), 6 * s)) snap.Region = new Region(path);
+      snap.Invalidate();
+    } else if (snap.Left != sx || snap.Top != y) {
+      Native.SetWindowPos(snap.Handle, IntPtr.Zero, sx, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+    }
+    if (!snap.Visible) { snap.Show(); snap.Own(owner); }
+    KeepAbove(pill); KeepAbove(snap);
     if (menu.Visible) PlaceMenu();
+  }
+
+  void HideAll() { if (pill.Visible) pill.Hide(); if (snap.Visible) snap.Hide(); if (menu.Visible) menu.Hide(); }
+
+  /** 小窗口有时掉到 Claude 窗口后面、被整个挡住（2026-10-19 桌面版重开后就这样，胶囊看不见）：
+   *  从 Claude 窗口往上数几层找它，找不到就挪到 Claude 窗口正上方。 */
+  void KeepAbove(Form f) {
+    var h = owner;
+    for (var i = 0; i < 8; i++) { h = Native.GetWindow(h, 3 /* GW_HWNDPREV */); if (h == IntPtr.Zero) break; if (h == f.Handle) return; }
+    var prev = Native.GetWindow(owner, 3);
+    // 上面那个是置顶窗口就放到普通窗口的最上层（插在置顶窗口后面会把自己也变成置顶）
+    if (prev != IntPtr.Zero && ((long)Native.GetWindowLongPtr(prev, -20 /* GWL_EXSTYLE */) & 0x8 /* WS_EX_TOPMOST */) != 0) prev = IntPtr.Zero;
+    Native.SetWindowPos(f.Handle, prev, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);   // NOSIZE | NOMOVE | NOACTIVATE
+  }
+
+  /** 把 Claude 窗口摆到所在屏幕工作区（不含任务栏）的第 i 个三分之一：看得见的边框正好对齐，最大化的先还原。 */
+  void SnapTo(int i) {
+    var h = owner; if (h == IntPtr.Zero) return;
+    if (Native.IsZoomed(h) || Native.IsIconic(h)) Native.ShowWindow(h, 9 /* SW_RESTORE */);
+    var wa = Screen.FromHandle(h).WorkingArea;
+    int l = wa.Left + (int)Math.Round(wa.Width * i / 3.0), rr = wa.Left + (int)Math.Round(wa.Width * (i + 1) / 3.0);
+    // 窗口矩形比看得见的边框大一圈（隐形的拉伸边）：按两者的差把目标放大
+    Native.RECT wr, fr; Native.GetWindowRect(h, out wr);
+    if (Native.DwmGetWindowAttribute(h, 9 /* EXTENDED_FRAME_BOUNDS */, out fr, Marshal.SizeOf(typeof(Native.RECT))) != 0) fr = wr;
+    int el = fr.Left - wr.Left, et = fr.Top - wr.Top, er = wr.Right - fr.Right, eb = wr.Bottom - fr.Bottom;
+    Native.SetWindowPos(h, IntPtr.Zero, l - el, wa.Top - et, rr - l + el + er, wa.Height + et + eb, 0x0004 | 0x0010);   // NOZORDER | NOACTIVATE
+    Place();
   }
 
   /** 标题栏空白处取一个像素：亮 = 浅色主题。 */

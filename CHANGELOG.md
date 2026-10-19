@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.7.0
+- **Window buttons.** Three small buttons left of the title bar counter move the Claude window to the left, middle or right third of its screen. Handy on ultrawide monitors.
+- **The counter no longer hides behind the Claude window.** After the desktop app restarted, the counter could end up underneath the window and disappear. It now checks its place twice a second and moves back on top.
+
 ## 2.6.3
 - **The whole card is clickable.** Only the title row and the progress line used to open a session. A click is also no longer cancelled when the card sinks under the pointer: releasing on the spot opens the session the first time, instead of sometimes needing several clicks.
 
