@@ -26,6 +26,9 @@ const menubarArgv = (root: string, ttlMin: number, shared: string, device: strin
   ...(shared === '' ? [] : [shared]),
 ]
 const menubarStopArgv = (root: string) => ['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `${root}/${MENUBAR_LAUNCHER}`, 'stop']
+/** 浮窗（Mac 才有）：这个平台没有浮窗 = null，共用代码就跳过。 */
+const floatArgv = (_root: string, _ttlMin: number, _shared: string, _device: string): string[] | null => null
+const floatStopArgv = (_root: string): string[] | null => null
 /** 交给 Windows 打开 claude:// 链接，Claude 应用会切到对应会话。 */
 const openArgv = (link: string) => ['rundll32.exe', 'url.dll,FileProtocolHandler', link]
 /** 本机标签的默认值（设置项 deviceName 为空时用）：卡片上的灰色小标签、共享目录里的文件名都用它；有几台机器就各设各的。 */
@@ -61,6 +64,8 @@ let SHARED_DIR = ''
 let DEVICE = ''
 /** 菜单栏开关（设置项 menuBar，默认开） */
 let MENU_BAR = true
+/** 浮窗开关（设置项 floatWindow，默认开；这个平台没有浮窗时不起作用） */
+let FLOAT_WINDOW = true
 
 /** 缓存还剩几秒：从主 transcript 最后一次请求起算；没有请求过返回 null。 */
 const cacheLeft = (s: SessionRow) => (s.cacheAgeSec >= 0 ? TTL_SEC - s.cacheAgeSec : null)
@@ -99,6 +104,18 @@ const COLOR: Record<SessionStatus, string> = { input: 'yellow', running: 'blue',
 const ORDER: Record<SessionStatus, number> = { input: 0, running: 1, waiting: 2, done: 3, idle: 4 }
 const HEX: Record<SessionStatus, string> = { input: '#f5b324', running: '#3b82f6', waiting: '#7cc4f5', done: '#34a853', idle: '#8b8f98' }
 
+/**
+ * 这一轮已经结束、只剩后台命令在跑（盯守脚本之类，扫描给的 bgOnly）：状态照旧算 running，
+ * 但显示成绿色、排在别的在跑的会话后面，不算进蓝色的 running 数（用户 2026-11-23 定：没有正在做的任务，不要用蓝色引起注意）。
+ */
+const bgOnly = (s: SessionRow) => s.status === 'running' && s.bgOnly === true
+/** 正在干活的 running（蓝色那种）。 */
+const isBusy = (s: SessionRow) => s.status === 'running' && s.bgOnly !== true
+const hexOf = (s: SessionRow) => (bgOnly(s) ? HEX.done : HEX[s.status])
+const colorOf = (s: SessionRow) => (bgOnly(s) ? COLOR.done : COLOR[s.status])
+const labelOf = (s: SessionRow) => (bgOnly(s) ? 'background' : LABEL[s.status])
+const rankOf = (s: SessionRow) => (bgOnly(s) ? ORDER.waiting + 0.5 : ORDER[s.status])
+
 /** 还在这一轮里的会话（左栏）：在等我、在跑、停在工具调用上。 */
 const isLive = (s: SessionRow) => s.status === 'input' || s.status === 'running' || s.status === 'waiting'
 
@@ -122,7 +139,7 @@ const canOpen = (s: SessionRow) => !isRemote(s) || goLink(s) !== ''
 function barSvg(s: SessionRow) {
   const W = 600
   const H = 6
-  const c = HEX[s.status]
+  const c = hexOf(s)
   const track = `<rect x="0" y="1" width="${W}" height="4" rx="2" fill="${c}" fill-opacity="0.18"/>`
   let fill = ''
   if (s.total > 0) {
@@ -178,15 +195,15 @@ function bar(s: SessionRow, cols: number) {
 
 async function publishStatus($: EngineInterface) {
   const b = await read($, board)
-  const running = b.sessions.filter(s => s.status === 'running').length
+  const running = b.sessions.filter(isBusy).length
   const tokens = b.sessions.reduce((n, s) => n + billed(s), 0)
   await $.ui.status(`${running} running / ${b.sessions.length} sessions · ${fmt(tokens)} tok`)
 }
 
-/** 本模块这次加载里已经确认过菜单栏（开着就确保在跑，关着就停掉），不用每次连上都再跑一遍启动器。 */
+/** 本模块这次加载里已经确认过菜单栏和浮窗（开着就确保在跑，关着就停掉），不用每次连上都再跑一遍启动器。 */
 let menubarChecked = false
 
-/** 菜单栏：设置项开着就确保在跑（启动器只留一个、脱离会话），关着就停掉。失败只记日志。 */
+/** 菜单栏、浮窗：设置项开着就确保在跑（启动器各只留一个、脱离会话），关着就停掉。失败只记日志。 */
 async function ensureMenubar($: EngineInterface) {
   if (menubarChecked) return
   menubarChecked = true
@@ -195,6 +212,11 @@ async function ensureMenubar($: EngineInterface) {
     const root = script.slice(0, script.length - SCAN_SCRIPT.length - 1)
     const r = await $.process.run(MENU_BAR ? menubarArgv(root, TTL_SEC / 60, SHARED_DIR, DEVICE) : menubarStopArgv(root))
     if (r.exitCode !== 0) $.ui.log(`task-board: menu bar launcher exited ${r.exitCode}`, { to: 'debug' })
+    const float = FLOAT_WINDOW ? floatArgv(root, TTL_SEC / 60, SHARED_DIR, DEVICE) : floatStopArgv(root)
+    if (float !== null) {
+      const f = await $.process.run(float)
+      if (f.exitCode !== 0) $.ui.log(`task-board: floating window launcher exited ${f.exitCode}`, { to: 'debug' })
+    }
   } catch (err) {
     menubarChecked = false
     $.ui.log(`task-board: menu bar launcher failed: ${String(err)}`, { to: 'debug' })
@@ -325,6 +347,7 @@ function boardFrom(got: ScanLine, b: Board): Board {
     usage: parseUsage(got.usageText),
     inputDir: got.inputDir,
     livePusher: got.livePusher,
+    warn: got.sharedWarn,
   }
 }
 
@@ -445,8 +468,8 @@ function rowState(s: SessionRow) {
   // 在等我决定：不管有没有清单，整条黄色 + needs input，一眼看到
   if (s.status === 'input') return { text: LABEL.input, color: HEX.input, frac: 1 }
   // 有清单：百分比 + 静止进度线；没有清单的运行中会话不知道进度，只留灰轨道
-  if (s.total > 0) return { text: pct(s), color: HEX[s.status], frac: s.done / s.total }
-  return { text: LABEL[s.status], color: HEX[s.status], frac: s.status === 'idle' || s.status === 'running' ? 0 : 1 }
+  if (s.total > 0) return { text: pct(s), color: hexOf(s), frac: s.done / s.total }
+  return { text: labelOf(s), color: hexOf(s), frac: s.status === 'idle' || s.status === 'running' ? 0 : 1 }
 }
 
 
@@ -734,6 +757,7 @@ export const register: Register = (on, options) => {
   SHARED_DIR = typeof options?.sharedDir === 'string' ? options.sharedDir.trim() : DEFAULT_SHARED
   DEVICE = (typeof options?.deviceName === 'string' ? options.deviceName.trim() : '') || DEFAULT_DEVICE
   MENU_BAR = options?.menuBar !== false
+  FLOAT_WINDOW = options?.floatWindow !== false
   const nx = nextOptions(options)
 
   // 新一轮开始（打字或别的方式）就收起旧建议。
@@ -843,8 +867,8 @@ export const register: Register = (on, options) => {
     const self = await read($, me)
     const active = b.sessions
       .filter(s => isActive(s) && !isHidden(b.prefs, b.at, s))
-      .sort((x, y) => ORDER[x.status] - ORDER[y.status] || x.ageSec - y.ageSec)
-    const running = active.filter(s => s.status === 'running').length
+      .sort((x, y) => rankOf(x) - rankOf(y) || x.ageSec - y.ageSec)
+    const running = active.filter(isBusy).length
     const tokens = active.reduce((n, s) => n + billed(s), 0)
     const shown = active.slice(0, BAND_MAX)
     const more = active.length - shown.length
@@ -859,8 +883,9 @@ export const register: Register = (on, options) => {
     const count = (f: (s: SessionRow) => boolean) => active.filter(f).length
     const foldParts = [
       { t: `● ${count(s => s.status === 'input')} needs input`, c: HEX.input, n: count(s => s.status === 'input') },
-      { t: `● ${count(s => s.status === 'running')} running`, c: HEX.running, n: count(s => s.status === 'running') },
+      { t: `● ${count(isBusy)} running`, c: HEX.running, n: count(isBusy) },
       { t: `● ${count(s => s.status === 'waiting')} waiting`, c: HEX.waiting, n: count(s => s.status === 'waiting') },
+      { t: `● ${count(bgOnly)} background`, c: HEX.done, n: count(bgOnly) },
       { t: `● ${count(s => s.status === 'done' || s.status === 'idle')} done`, c: HEX.done, n: 1 },
     ].filter(x => x.n > 0)
 
@@ -945,7 +970,7 @@ export const register: Register = (on, options) => {
             backgroundColor={isSelf ? ACCENT_TINT : undefined}
           >
             <Box flexDirection="row" alignItems="center" gap={1}>
-              <Text color={HEX[s.status]}>●</Text>
+              <Text color={hexOf(s)}>●</Text>
               {isRemote(s) && <Box flexShrink={0}>{tag(`m-tag-${s.id}`, s)}</Box>}
               <Box flexGrow={1} minWidth={0} overflow="hidden">
                 <Text wrap="truncate-end">{s.title}</Text>
@@ -1076,6 +1101,7 @@ export const register: Register = (on, options) => {
               <Text wrap="truncate-end">
                 <Text bold>Running</Text>
                 <Text dimColor> {live.length} · {fmt(tokens)} tok</Text>
+                {b.warn && <Text color={HEX.input}> · {b.warn}</Text>}
               </Text>
             </Box>
             {usageMini(true)}
@@ -1109,14 +1135,14 @@ export const register: Register = (on, options) => {
       const tag = (s: SessionRow) => {
         const left = showsCache(s) ? cacheLeft(s) : null
         if (left !== null) return cacheText(left)
-        return s.total > 0 && s.status !== 'input' ? `${Math.round((s.done / s.total) * 100)}%` : LABEL[s.status]
+        return s.total > 0 && s.status !== 'input' ? `${Math.round((s.done / s.total) * 100)}%` : labelOf(s)
       }
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" gap={2}>
             <Text dimColor>{running} running · {fmt(tokens)} tok</Text>
             {shown.map(s => (
-              <Text color={COLOR[s.status]}>
+              <Text color={colorOf(s)}>
                 ● {fit(s.title, 12).trim()} {tag(s)}
               </Text>
             ))}
@@ -1218,7 +1244,7 @@ export const register: Register = (on, options) => {
           {!isSelf && canOpen(s) && hit(`go-${s.id}`, `go:${s.id}`, s.id)}
           <Box flexDirection="row" alignItems="center" gap={1}>
             <Box position="relative" flexDirection="row" alignItems="center" gap={1} flexGrow={1} minWidth={0}>
-              <Text color={HEX[s.status]}>●</Text>
+              <Text color={hexOf(s)}>●</Text>
               <Box flexDirection="row" alignItems="center" gap={1} flexGrow={1} minWidth={0}>
                 {isRemote(s) && <Box flexShrink={0}>{tag(`tag-${s.id}`, s)}</Box>}
                 <Text wrap="truncate-end">{s.title}</Text>
@@ -1483,8 +1509,13 @@ export const register: Register = (on, options) => {
             <Box flexDirection="row" alignItems="center" gap={1} flexShrink={1} minWidth={0} overflow="hidden">
               <Text bold>Running</Text>
               <Box flexShrink={1} minWidth={0} overflow="hidden">
-                <Text dimColor wrap="truncate-end">{live.length} · {fmt(tokens)} tok</Text>
+                <Text dimColor wrap="truncate-end">{live.length} · {fmt(tokens)} tok{b.warn ? ` · ` : ''}</Text>
               </Box>
+              {b.warn && (
+                <Box flexShrink={1} minWidth={0} overflow="hidden">
+                  <Text color={HEX.input} wrap="truncate-end">{b.warn}</Text>
+                </Box>
+              )}
             </Box>
             {ctxRing}
             {ring}
@@ -1556,8 +1587,8 @@ export const register: Register = (on, options) => {
     const all = await read($, showAll)
     const shown = all ? b.sessions : b.sessions.filter(isActive)
     const hidden = b.sessions.length - shown.length
-    const list = [...shown].sort((x, y) => ORDER[x.status] - ORDER[y.status] || x.ageSec - y.ageSec)
-    const running = list.filter(s => s.status === 'running').length
+    const list = [...shown].sort((x, y) => rankOf(x) - rankOf(y) || x.ageSec - y.ageSec)
+    const running = list.filter(isBusy).length
     const total = list.reduce((n, s) => n + billed(s), 0)
     const summary = `${list.length} sessions · ${running} running · ${fmt(total)} tok total`
     const scope = all
@@ -1584,7 +1615,7 @@ export const register: Register = (on, options) => {
         .join(' · ')
     }
     const right = (s: SessionRow) =>
-      s.total > 0 && s.status !== 'input' ? `${Math.round((s.done / s.total) * 100)}% · ${s.done}/${s.total}` : LABEL[s.status]
+      s.total > 0 && s.status !== 'input' ? `${Math.round((s.done / s.total) * 100)}% · ${s.done}/${s.total}` : labelOf(s)
 
     // 桌面：扁平风格，开关和“显示全部”是带悬停的扁平控件，整行可点跳到该会话（透明点击层）
     if (e.surface === 'desktop') {
@@ -1683,7 +1714,7 @@ export const register: Register = (on, options) => {
                 </Box>
                 <Box position="relative" flexDirection="column">
                   <Text dimColor wrap="truncate-end">{subtitle(s)}</Text>
-                  <Svg source={lineSvg(frac, HEX[s.status])} alt={`${s.title}: ${right(s)}`} height={6} />
+                  <Svg source={lineSvg(frac, hexOf(s))} alt={`${s.title}: ${right(s)}`} height={6} />
                 </Box>
               </Box>
             )
@@ -1751,7 +1782,7 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column" marginTop={1}>
             <Box flexDirection="row">
               <Text bold>{fit(isRemote(s) ? `${s.device} · ${s.title}` : s.title, titleCols)} </Text>
-              <Text color={COLOR[s.status]}>{bar(s, barCols)}</Text>
+              <Text color={colorOf(s)}>{bar(s, barCols)}</Text>
               <Text> {fit(right(s), 14)}</Text>
               <Text>{fmt(billed(s)).padStart(8)}</Text>
             </Box>

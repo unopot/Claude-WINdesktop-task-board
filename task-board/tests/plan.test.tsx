@@ -697,3 +697,37 @@ test('iPhone Live 开关：本机装了推送器（扫描进程给出 livePusher
   expect(await pane.find({ key: 'pane-phone' })).toBeDefined()
   await pane.unmount()
 })
+
+test('只剩后台命令在跑（bgOnly）：照旧列在 Running 里，但画成绿色、写 background，不算进蓝色的 running 数', async ($, on) => {
+  const at = Date.now()
+  const board = {
+    at, tick: 1, prefs: { nextSteps: false }, prefsPath: 'C:/x/prefs.json',
+    sessions: [
+      row('w', '盯守中的会话', 'running', 5, { bgOnly: true }),
+      row('a', '在跑的会话', 'running', 5),
+      row('c', '做完的会话', 'done', 600),
+    ],
+  }
+  on('state.get', async (_$, e, next) => {
+    if (e.plugin === 'task-board' && e.key === 'board') return { value: { value: board, version: 1 } }
+    if (e.plugin === 'task-board' && e.key === 'me') return { value: { value: 'a', version: 1 } }
+    return next(e)
+  })
+  on('ui.log', async () => ({ value: undefined }))
+  const ui = await $.ui.mount({ plugin: 'task-board', surface: 'desktop', ...BAND })
+  expect(await ui.find({ key: 'row-w' })).toBeDefined()
+  // 卡片：第一个带颜色的字是状态圆点；进度线的 alt = 标题: 右边的字（没有清单时进度线只有灰轨道）
+  type N = { type: string; props: Record<string, unknown>; text?: string; children?: N[] }
+  const all = (n: N | undefined): N[] => (n ? [n, ...(n.children ?? []).flatMap(all)] : [])
+  const card = async (id: string) => all((await ui.find({ key: `row-${id}` })) as N | undefined)
+  const dot = async (id: string) => (await card(id)).find(n => n.type === 'Text' && n.props.color !== undefined)?.props.color
+  const right = async (id: string, title: string) => (await card(id)).find(n => n.type === 'Svg' && String(n.props.alt).startsWith(`${title}: `))?.props.alt
+  expect(await dot('w')).toBe('#34a853')
+  expect(await right('w', '盯守中的会话')).toBe('盯守中的会话: background')
+  expect(await dot('a')).toBe('#3b82f6')
+  expect(await right('a', '在跑的会话')).toBe('在跑的会话: running')
+  await ui.pointer({ type: 'up', x: 1, y: 0, button: 'left', in: 'hit-fold' })
+  expect(await ui.find({ type: 'Text', text: /^   ● 1 running$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^   ● 1 background$/ })).toBeDefined()
+  await ui.unmount()
+})

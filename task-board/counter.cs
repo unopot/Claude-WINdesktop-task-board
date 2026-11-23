@@ -26,13 +26,17 @@ public class Row {
   public double AgeSec, CacheAgeSec = -1, TurnSec = -1;
   public int Done, Total;
   public bool IsLive { get { return Status == "input" || Status == "running" || Status == "waiting"; } }
+  /** 这一轮已经结束、只剩后台命令在跑（扫描给的 bgOnly）：照旧算 running，但画成绿色、排在后面、不算进蓝色的数（用户 2026-11-23 定） */
+  public bool BgOnly;
+  /** 画的时候按哪种看：只剩后台的 running 单独一种（颜色、排序、右边的字） */
+  public string Look { get { return Status == "running" && BgOnly ? "bgOnly" : Status; } }
 }
 
 /** 扫描结果 → 要列出的会话；和任务板一样的规则。 */
 public static class Plan {
   public const int ACTIVE_SEC = 60 * 60;        // 多久没动静就不再列出（在跑 / 在等的始终列出）
   public const int REMOTE_MAX_SEC = 10 * 60;    // 别的电脑的快照超过这么久没更新 = 离线
-  public static readonly Dictionary<string, int> ORDER = new Dictionary<string, int> { { "input", 0 }, { "running", 1 }, { "waiting", 2 }, { "done", 3 }, { "idle", 4 } };
+  public static readonly Dictionary<string, int> ORDER = new Dictionary<string, int> { { "input", 0 }, { "running", 1 }, { "waiting", 2 }, { "bgOnly", 3 }, { "done", 4 }, { "idle", 5 } };
   static readonly System.Text.RegularExpressions.Regex BRIDGE_ID = new System.Text.RegularExpressions.Regex("^(cse|session)_[A-Za-z0-9_-]+$");
   static readonly System.Text.RegularExpressions.Regex LOCAL_LINK = new System.Text.RegularExpressions.Regex("^claude://claude\\.ai/epitaxy/local_[0-9a-f-]+$");
 
@@ -50,7 +54,7 @@ public static class Plan {
       Id = Str(d, "id"), Title = Str(d, "title"), Link = Str(d, "link"), Bridge = Str(d, "bridge"), Project = Str(d, "project"),
       Status = Str(d, "status") == "" ? "idle" : Str(d, "status"), Current = Str(d, "current"), Device = device,
       AgeSec = Num(d, "ageSec", 0) + shift, CacheAgeSec = later(Num(d, "cacheAgeSec", -1)), TurnSec = later(Num(d, "turnSec", -1)),
-      Done = (int)Num(d, "done", 0), Total = (int)Num(d, "total", 0),
+      Done = (int)Num(d, "done", 0), Total = (int)Num(d, "total", 0), BgOnly = d.ContainsKey("bgOnly") && d["bgOnly"] is bool && (bool)d["bgOnly"],
     };
   }
 
@@ -96,7 +100,7 @@ public static class Plan {
       if (!(quiet < ACTIVE_SEC && (!hasLeft || ttlSec - s.CacheAgeSec > 0))) return false;
       double hv;
       return !hidden.TryGetValue(s.Id, out hv) || at - quiet * 1000 > hv + 15000;
-    }).OrderBy(s => ORDER.ContainsKey(s.Status) ? ORDER[s.Status] : 9).ThenBy(s => s.AgeSec).ToList();
+    }).OrderBy(s => ORDER.ContainsKey(s.Look) ? ORDER[s.Look] : 9).ThenBy(s => s.AgeSec).ToList();
   }
 
   /** 点一行要打开的链接：本机的切到桌面应用里那个会话；别的电脑的走 Remote Control。 */
@@ -157,9 +161,9 @@ static class Native {
 static class Draw {
   public static Color Hex(string hex) { return ColorTranslator.FromHtml(hex); }
   public static readonly Dictionary<string, string> HEX = new Dictionary<string, string> {
-    { "input", "#f5b324" }, { "running", "#3b82f6" }, { "waiting", "#7cc4f5" }, { "done", "#34a853" }, { "idle", "#8b8f98" } };
+    { "input", "#f5b324" }, { "running", "#3b82f6" }, { "waiting", "#7cc4f5" }, { "done", "#34a853" }, { "idle", "#8b8f98" }, { "bgOnly", "#34a853" } };
   public static readonly Dictionary<string, string> LABEL = new Dictionary<string, string> {
-    { "input", "needs input" }, { "running", "running" }, { "waiting", "waiting" }, { "done", "done" }, { "idle", "idle" } };
+    { "input", "needs input" }, { "running", "running" }, { "waiting", "waiting" }, { "done", "done" }, { "idle", "idle" }, { "bgOnly", "background" } };
   public static GraphicsPath Round(RectangleF r, float rad) {
     var p = new GraphicsPath(); var d = rad * 2;
     p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
@@ -211,8 +215,8 @@ class Pill : Floating {
     var rows = Rows();
     var parts = new List<KeyValuePair<int, string>> {
       new KeyValuePair<int, string>(rows.Count(s => s.Status == "input"), Draw.HEX["input"]),
-      new KeyValuePair<int, string>(rows.Count(s => s.Status == "running" || s.Status == "waiting"), Draw.HEX["running"]),
-      new KeyValuePair<int, string>(rows.Count(s => s.Status == "done" || s.Status == "idle"), Draw.HEX["done"]),
+      new KeyValuePair<int, string>(rows.Count(s => (s.Status == "running" && !s.BgOnly) || s.Status == "waiting"), Draw.HEX["running"]),
+      new KeyValuePair<int, string>(rows.Count(s => s.Status == "done" || s.Status == "idle" || s.Look == "bgOnly"), Draw.HEX["done"]),
     };
     return parts.Where(p => p.Key > 0).ToList();
   }
@@ -322,7 +326,7 @@ class Menu : Floating {
         if (it == null) { using (var pen = new Pen(Theme.MenuLine)) g.DrawLine(pen, b.Left + 4 * Zoom, b.Top + b.Height / 2, b.Right - 4 * Zoom, b.Top + b.Height / 2); continue; }
         var str = it as string;
         if (str != null) { TextRenderer.DrawText(g, str, head, new Rectangle(b.Left + (int)(10 * Zoom), b.Top, b.Width, b.Height), Theme.Muted, flags); continue; }
-        var s = (Row)it; var c = Draw.Hex(Draw.HEX.ContainsKey(s.Status) ? Draw.HEX[s.Status] : Draw.HEX["idle"]);
+        var s = (Row)it; var c = Draw.Hex(Draw.HEX.ContainsKey(s.Look) ? Draw.HEX[s.Look] : Draw.HEX["idle"]);
         if (i == hoverIdx) using (var hb = new SolidBrush(Theme.Hover)) using (var hp = Draw.Round(b, 5 * Zoom)) g.FillPath(hb, hp);
         float d = 9 * Zoom; int x = b.Left + (int)(12 * Zoom); int cy = b.Top + b.Height / 2;
         using (var db = new SolidBrush(c)) g.FillEllipse(db, x, cy - d / 2, d, d);
@@ -337,7 +341,7 @@ class Menu : Floating {
         // 右半边：状态 · 项目 · 时间 · 进度；左半边标题，放不下就截断
         var progress = s.Total > 0 ? " · " + s.Done + "/" + s.Total : "";
         var meta = " · " + s.Project + " · " + Plan.When(s) + progress;
-        var label = Draw.LABEL.ContainsKey(s.Status) ? Draw.LABEL[s.Status] : s.Status;
+        var label = Draw.LABEL.ContainsKey(s.Look) ? Draw.LABEL[s.Look] : s.Status;
         var lw = TextRenderer.MeasureText(g, label, small, Size.Empty, TextFormatFlags.NoPadding).Width;
         var mw = Math.Min(TextRenderer.MeasureText(g, meta, small, Size.Empty, TextFormatFlags.NoPadding).Width, (int)(200 * Zoom));
         var right = b.Right - (int)(10 * Zoom);

@@ -21,6 +21,8 @@ export type SessionRow = {
   output: number
   subagents: number
   subActive: number
+  /** 这一轮已经结束、只剩后台命令在跑（run_in_background 的盯守脚本等；没有在跑的子代理、Workflow）：status 照旧是 running，任务板显示成绿色。旧扫描没有这个字段 */
+  bgOnly?: boolean
   /** 任务清单的每一步；sec = 耗时秒数（进行中 = 已进行多久，未开始 = -1） */
   steps?: Step[]
   /** 任务清单总耗时（第一步建立起到现在或到最后一步完成）；没有清单 = -1 */
@@ -78,11 +80,15 @@ export type Board = {
   inputDir?: string
   /** 本机装了 iPhone Live 推送器（有 ~/.claude/task-board-live.json），任务板才画 iPhone Live 开关 */
   livePusher?: boolean
+  /** 扫描进程发现本机快照传不上同步盘（iCloud 上传卡住）：任务板标题行红字提示 */
+  warn?: string
 }
 
 /** 扫描进程输出的一行（也是共用快照 ~/.claude/task-board-snapshot.json 的内容）；usageText = 用量文件原文 */
 export type ScanLine = Pick<Board, 'at' | 'sessions' | 'prefs' | 'prefsPath' | 'usagePath' | 'inputDir' | 'livePusher'> & {
   usageText?: string
+  /** iCloud 上传卡住的提示（Mac 的扫描脚本每 5 分钟放探针文件验一次）；没卡就没有 */
+  sharedWarn?: string
   /** 本机标签（设置项 deviceName；共享目录里的文件名）和系统（win / mac） */
   device?: string
   os?: string

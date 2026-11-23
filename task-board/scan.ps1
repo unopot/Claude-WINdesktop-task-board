@@ -79,6 +79,7 @@ function New-FileState {
      todoT = @{}; lastDone = $null
      turnAt = $null     # 这一轮用户提问的时间（没有任务清单时的总耗时从这里算）
      bg = @{}           # 还在后台跑的活：编号 -> 派出去的时间（UTC）
+     bgAgent = @{}      # 其中派出去的是子代理 / Workflow（不是后台命令）的编号：它们在跑 = 还有活在做
      waitId = ''; waitAt = $null   # 还没答的提问 / 计划审批 / 开新会话卡片：工具调用 id 和时间
      model = ''; tool = ''; firstTs = $null; lastTs = $null; effort = ''; calls = 0 }   # 子代理行用
 }
@@ -152,8 +153,9 @@ function Read-New($path, $st) {
     if ($tr -ge 0) {
       $rest = $line.Substring($tr)
       $bm = $rxBgCmd.Match($rest)
-      if (-not $bm.Success -and $rest.IndexOf('"status":"async_launched"', [StringComparison]::Ordinal) -ge 0) { $bm = $rxBgAsync.Match($rest) }
-      if ($bm.Success) { $st.bg[$bm.Groups[1].Value] = if ($lts) { $lts } else { [datetime]::UtcNow } }
+      $agent = $false
+      if (-not $bm.Success -and $rest.IndexOf('"status":"async_launched"', [StringComparison]::Ordinal) -ge 0) { $bm = $rxBgAsync.Match($rest); $agent = $true }
+      if ($bm.Success) { $st.bg[$bm.Groups[1].Value] = if ($lts) { $lts } else { [datetime]::UtcNow }; if ($agent) { $st.bgAgent[$bm.Groups[1].Value] = $true } }
       # TaskStop 停掉的不会再有完成通知：停成功就算结束
       if ($st.bg.Count -gt 0 -and $rest.IndexOf('"message":"Successfully stopped task', [StringComparison]::Ordinal) -ge 0) {
         $sm = $rxBgStop.Match($rest); if ($sm.Success) { $st.bg.Remove($sm.Groups[1].Value) }
@@ -236,7 +238,10 @@ function Read-New($path, $st) {
 }
 
 # 桌面应用的会话元数据：cliSessionId（= transcript 文件名）→ 应用里的会话编号、标题、是否已归档
-$appRoot = Join-Path $env:APPDATA 'Claude\claude-code-sessions'
+# 2026-10 起桌面版把数据挪进 %LOCALAPPDATA%\Claude-Data\claude_<编号>\；旧版本还在 %APPDATA%\Claude\
+$appRoot = @(@(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Claude-Data') -Directory -Filter 'claude_*' -ErrorAction SilentlyContinue |
+  ForEach-Object { Join-Path $_.FullName 'claude-code-sessions' } | Where-Object { Test-Path $_ } |
+  Sort-Object { (Get-Item $_).LastWriteTimeUtc } -Descending) + (Join-Path $env:APPDATA 'Claude\claude-code-sessions'))[0]
 $meta = @{}
 $rxLocal = [regex]'"sessionId":"(local_[^"]+)"'
 $rxCli = [regex]'"cliSessionId":"([^"]+)"'
@@ -366,7 +371,11 @@ do {
     # 派到后台的活还没收到完成通知：这一轮虽然结束了（end_turn），活还在跑，跑完会叫醒会话接着做
     $old = $nowU.AddHours(-$PENDING_MAX_H)
     foreach ($bk in @($st.bg.Keys)) { if ($st.bg[$bk] -lt $old) { $st.bg.Remove($bk) } }
+    $turnOver = ($status -eq 'done' -or $status -eq 'idle')
     if (($status -eq 'done' -or $status -eq 'idle') -and $st.bg.Count -gt 0) { $status = 'running' }
+    # 这一轮已经结束、只剩后台命令在跑（盯守脚本之类）：照旧算 running，任务板显示成绿色（用户 2026-11-23 定）。
+    # 派出去的子代理 / Workflow 还没完、或者有子代理在写 = 还有活在做，不算
+    $bgOnly = $turnOver -and $st.bg.Count -gt 0 -and $sub.active -eq 0 -and -not (@($st.bg.Keys) | Where-Object { $st.bgAgent.ContainsKey($_) })
     # 在等我：弹出来要我点的提问 / 计划审批 / 开新会话卡片还没答（这一轮结尾“下一步”框里的问题不算：那一轮已经做完了）
     if ($st.waitId -and $st.waitAt -and $st.waitAt -lt $old) { $st.waitId = '' }
     $asking = [bool]$st.waitId
@@ -442,7 +451,7 @@ do {
       id = $id; title = $title; link = $link; bridge = $bridge; project = (Split-Path $st.cwd -Leaf); status = $status
       ageSec = [int]$age; msgAgeSec = [int]$msgAge; cacheAgeSec = $cacheAge; done = $done; total = $total; current = $current
       input = $st.tin + $sub.tin; cacheWrite = $st.tcw + $sub.tcw; cacheRead = $st.tcr + $sub.tcr; output = $st.tout + $sub.tout
-      subagents = $sub.n; subActive = $sub.active
+      subagents = $sub.n; subActive = $sub.active; bgOnly = ($status -eq 'running' -and $bgOnly)
       model = $st.model; effort = $st.effort
       steps = @($steps); planSec = $planSec; turnSec = $turnSec; subs = @($subRows)
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.0
+- **Background-only sessions are green.** When a turn has ended and only a background command is still running (for example a watcher started with `run_in_background`), the card stays under Running but is drawn green with `background`, sorted last, and counted with the green sessions in the title bar counter instead of the blue ones. A background subagent or workflow still counts as work in progress (blue). The scanner reports this as `bgOnly` on each session.
+- Session metadata is also read from the desktop app's new data folder (`%LOCALAPPDATA%\Claude-Data\claude_*`), so cards open the right session again after the app moved it.
+- Shared files are in step with the macOS version again (the `floatWindow` option and the iCloud upload warning field; Windows has no floating window, so the option does nothing here).
+
 ## 2.7.0
 - **Window buttons.** Three small buttons left of the title bar counter move the Claude window to the left, middle or right third of its screen. Handy on ultrawide monitors.
 - **The counter no longer hides behind the Claude window.** After the desktop app restarted, the counter could end up underneath the window and disappear. It now checks its place twice a second and moves back on top.

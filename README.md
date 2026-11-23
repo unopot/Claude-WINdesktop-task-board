@@ -14,7 +14,8 @@ Expand a running card to see its task list by stage, how long each step took, wh
 
 | Color | Status | Meaning |
 | --- | --- | --- |
-| blue | `43%` / `running` | working, or the turn ended with background work (a background command, subagent or workflow) still running; the percentage is the task list's progress |
+| blue | `43%` / `running` | working, or the turn ended with a background subagent or workflow still running; the percentage is the task list's progress |
+| green | `background` | the turn ended and only a background command is still running (a watcher script, a long build): still counted as running, but listed last and drawn green so it does not ask for your attention |
 | yellow | `needs input` | waiting for you: a permission dialog, a question, a plan to approve, an MCP form, or a "New session / Do it here" card: something that pops up and waits for your click (a question in the next-step box at the end of a turn does not count; that turn is done) |
 | light blue | `waiting` | stopped on a long tool call that does not need you |
 
@@ -34,7 +35,7 @@ Interactions:
 
 The board lives above the prompt of a session, so you only see it while a session on this computer is open. The title bar counter is always there: on the new-session page, while you read an old session, or while a Remote Control session from another computer is open.
 
-- A small coloured count in the Claude desktop app's title bar, just left of the icons at the top right: **yellow** = needs input, **blue** = running or waiting, **green** = done (the same sessions the board lists: finished within the last hour with the cache still warm, hidden ones left out). A grey dot when there is nothing.
+- A small coloured count in the Claude desktop app's title bar, just left of the icons at the top right: **yellow** = needs input, **blue** = running or waiting, **green** = done or only a background command left (the same sessions the board lists: finished within the last hour with the cache still warm, hidden ones left out). A grey dot when there is nothing.
 - Click it for the list: one row per session with a coloured dot, title, state, project and time; sessions from another computer carry its label. Click a row to switch to that session (one from another computer opens through Remote Control, as on the board).
 - Left of the count are three window buttons for wide screens: click one to move the Claude window to the left, middle or right third of its screen (full height, taskbar left free; a maximized window is restored first).
 - It is a tiny window of its own that sticks to the Claude window: it moves with it, stays on top of it, and hides when the window is minimized, on another virtual desktop, or narrower than about 760 px.
